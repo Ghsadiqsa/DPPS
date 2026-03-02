@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
-import { Info, Target, Zap, Shield, AlertTriangle, RefreshCw, Save } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Info, Target, Zap, Shield, AlertTriangle, RefreshCw, Save, KeyRound, Loader2, Users } from "lucide-react";
+import { useSession } from "next-auth/react";
 import {
   Tooltip,
   TooltipContent,
@@ -33,6 +35,8 @@ interface DppsConfig {
   dateProximityDays: number;
   fuzzyAmountTolerance: string;
   legalEntityScope: string;
+  enableFuzzyLogic: boolean;
+  useCompositeKeys: boolean;
 }
 
 const DEFAULT_CONFIG: DppsConfig = {
@@ -44,6 +48,8 @@ const DEFAULT_CONFIG: DppsConfig = {
   dateProximityDays: 7,
   fuzzyAmountTolerance: "0.5",
   legalEntityScope: "within",
+  enableFuzzyLogic: true,
+  useCompositeKeys: true,
 };
 
 export default function SettingsPage() {
@@ -52,9 +58,42 @@ export default function SettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
 
+  // Password Change State
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  // RBAC State
+  const { data: session } = useSession();
+  const isAdministrator = (session?.user as any)?.role === 'ADMINISTRATOR';
+  const [rolePermissions, setRolePermissions] = useState<any[]>([]);
+  const [selectedRoleForPermissions, setSelectedRoleForPermissions] = useState("Auditor");
+  const [isSavingPermissions, setIsSavingPermissions] = useState(false);
+
+  const availableTabs = [
+    "Dashboard", "Open Potential Duplicates", "Payment Gate", "Recovery",
+    "Reports", "Historical Data Load", "Documentation"
+  ];
+
   useEffect(() => {
     fetchConfig();
-  }, []);
+    if (isAdministrator) {
+      fetchRolePermissions();
+    }
+  }, [isAdministrator]);
+
+  const fetchRolePermissions = async () => {
+    try {
+      const res = await fetch('/api/settings/permissions');
+      if (res.ok) {
+        const data = await res.json();
+        setRolePermissions(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch role permissions:', error);
+    }
+  };
 
   const fetchConfig = async () => {
     try {
@@ -115,6 +154,85 @@ export default function SettingsPage() {
     } finally {
       setIsResetting(false);
     }
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      toast.error("New passwords do not match.");
+      return;
+    }
+    if (newPassword.length < 6) {
+      toast.error("New password must be at least 6 characters.");
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      const res = await fetch('/api/settings/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      if (res.ok) {
+        toast.success("Password changed successfully.");
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        const data = await res.json();
+        toast.error(data.error || "Failed to change password.");
+      }
+    } catch (error) {
+      toast.error("An error occurred while changing password.");
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const handleSavePermissions = async () => {
+    setIsSavingPermissions(true);
+    try {
+      const currentPerms = rolePermissions.find(p => p.role === selectedRoleForPermissions)?.allowedTabs || [];
+      const res = await fetch('/api/settings/permissions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: selectedRoleForPermissions, allowedTabs: currentPerms }),
+      });
+      if (res.ok) {
+        toast.success(`Permissions for ${selectedRoleForPermissions} updated successfully.`);
+        fetchRolePermissions();
+      } else {
+        toast.error("Failed to update role permissions.");
+      }
+    } catch (error) {
+      toast.error("An error occurred while saving permissions.");
+    } finally {
+      setIsSavingPermissions(false);
+    }
+  };
+
+  const toggleTabPermission = (tab: string) => {
+    setRolePermissions(prev => {
+      const existingRoleIndex = prev.findIndex(p => p.role === selectedRoleForPermissions);
+      let updatedPerms = [...prev];
+
+      if (existingRoleIndex >= 0) {
+        const roleData = { ...updatedPerms[existingRoleIndex] };
+        if (roleData.allowedTabs.includes(tab)) {
+          roleData.allowedTabs = roleData.allowedTabs.filter((t: string) => t !== tab);
+        } else {
+          roleData.allowedTabs = [...roleData.allowedTabs, tab];
+        }
+        updatedPerms[existingRoleIndex] = roleData;
+      } else {
+        updatedPerms.push({
+          role: selectedRoleForPermissions,
+          allowedTabs: [tab] // Initializing with the toggled tab
+        });
+      }
+      return updatedPerms;
+    });
   };
 
   const getRiskBadge = (value: number, type: 'critical' | 'high' | 'medium') => {
@@ -456,8 +574,167 @@ export default function SettingsPage() {
                 </Select>
               </div>
             </div>
+            <Separator />
+
+            {/* Strict / Fuzzy Toggle */}
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Label className="text-base font-bold">Enable Fuzzy Logic Module</Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[250px]">
+                        When disabled, only exact matches are processed. Fuzzy algorithms (Levenshtein, trigrams) will be skipped to save compute resources.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <p className="text-xs text-muted-foreground">Currently: {config.enableFuzzyLogic ? 'Enabled' : 'Strict Mode (Disabled)'}</p>
+              </div>
+              <div className="flex items-center">
+                <Switch
+                  checked={config.enableFuzzyLogic}
+                  onCheckedChange={(checked) => setConfig(prev => ({ ...prev, enableFuzzyLogic: checked }))}
+                />
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Composite Keys Toggle */}
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Label className="text-base font-bold">Use Composite Key Enforcement</Label>
+                </div>
+                <p className="text-xs text-muted-foreground">Boost score heavily if Vendor + Company Code + Reference Number all match</p>
+              </div>
+              <div className="flex items-center">
+                <Switch
+                  checked={config.useCompositeKeys}
+                  onCheckedChange={(checked) => setConfig(prev => ({ ...prev, useCompositeKeys: checked }))}
+                />
+              </div>
+            </div>
+
           </CardContent>
         </Card>
+
+        {/* Change Password Card */}
+        <Card className="overflow-hidden border-indigo-100">
+          <CardHeader className="bg-indigo-50/50 border-b border-indigo-100">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-indigo-500" />
+              <div>
+                <CardTitle>Account Security</CardTitle>
+                <CardDescription>Update your personal login credentials</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <form onSubmit={handlePasswordChange} className="max-w-md space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="current">Current Password</Label>
+                <Input
+                  id="current"
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="new">New Password</Label>
+                <Input
+                  id="new"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm">Confirm New Password</Label>
+                <Input
+                  id="confirm"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <Button type="submit" disabled={isChangingPassword || !currentPassword || !newPassword || !confirmPassword}>
+                {isChangingPassword && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Update Password
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        {/* Dynamic RBAC Configuration Card (Admin Only) */}
+        {isAdministrator && (
+          <Card className="overflow-hidden border-indigo-100">
+            <CardHeader className="bg-indigo-50/50 border-b border-indigo-100">
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-indigo-500" />
+                <div>
+                  <CardTitle>Role Permissions Configuration</CardTitle>
+                  <CardDescription>Dynamically manage which navigation tabs are visible for each role.</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-6">
+              <div className="flex items-center gap-4">
+                <Label className="w-24">Select Role:</Label>
+                <Select value={selectedRoleForPermissions} onValueChange={setSelectedRoleForPermissions}>
+                  <SelectTrigger className="w-64 font-bold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ADMINISTRATOR">Administrator</SelectItem>
+                    <SelectItem value="AP Manager">AP Manager</SelectItem>
+                    <SelectItem value="Auditor">Auditor</SelectItem>
+                    <SelectItem value="Viewer">Viewer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 border p-4 rounded-xl bg-slate-50">
+                {availableTabs.map(tab => {
+                  const currentRoleData = rolePermissions.find(p => p.role === selectedRoleForPermissions);
+                  // If no specific override exists, assume everything is permitted except Auditor to Payment Gate as a default implicit behavior.
+                  // But for strict RBAC, an empty config means NO access unless checked. 
+                  const isAllowed = currentRoleData
+                    ? currentRoleData.allowedTabs.includes(tab)
+                    : (selectedRoleForPermissions === 'Auditor' && tab === 'Payment Gate' ? false : true); // Default UX
+
+                  return (
+                    <div key={tab} className="flex items-center space-x-2 bg-white p-3 rounded-lg border shadow-sm">
+                      <Switch
+                        checked={isAllowed}
+                        onCheckedChange={() => toggleTabPermission(tab)}
+                        disabled={selectedRoleForPermissions === 'ADMINISTRATOR'} // Cannot lock admins out
+                      />
+                      <Label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                        {tab}
+                      </Label>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button onClick={handleSavePermissions} disabled={isSavingPermissions || selectedRoleForPermissions === 'ADMINISTRATOR'} className="bg-indigo-600 hover:bg-indigo-700">
+                  {isSavingPermissions && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save {selectedRoleForPermissions} Permissions
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-3 pt-4">

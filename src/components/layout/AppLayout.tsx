@@ -3,24 +3,92 @@
 import { Sidebar } from "./Sidebar";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, X, Send, Search, Bot, FileText, ShieldAlert } from "lucide-react";
+import { MessageSquare, X, Send, Search, Bot, FileText, ShieldAlert, Menu, ChevronRight, Bell, Settings, LogOut } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { signOut } from "next-auth/react";
+import { usePathname } from "next/navigation";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-export function AppLayout({ children }: { children: React.ReactNode }) {
+export function AppLayout({ children, session }: { children: React.ReactNode, session?: any }) {
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  // If we are on login page, just return children
+  if (pathname === '/login') {
+    return <div className="min-h-screen bg-[#F8FAFC]">{children}</div>;
+  }
+
+  const user = session?.user || {
+    name: "Jane Doe",
+    email: "jane@example.com",
+    role: "ADMINISTRATOR"
+  };
+
+  const initial = user.name ? user.name.split(' ').map((n: string) => n[0]).join('') : 'JD';
 
   return (
     <div className="flex h-screen overflow-hidden bg-secondary/30">
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
-        <header className="h-12 border-b bg-card flex items-center px-8 justify-between sticky top-0 z-10 shadow-sm">
-          <div className="text-sm font-medium text-muted-foreground truncate">
-            Home / DPPS / <span className="text-foreground">Prevention Control</span>
+        <header className="h-16 border-b bg-white flex items-center justify-between px-6 shrink-0 relative z-10 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="md:hidden"
+              onClick={() => setIsMobileOpen(true)}
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+            <nav className="hidden md:flex items-center space-x-2 text-sm text-slate-500">
+              <span>Home</span>
+              <ChevronRight className="h-4 w-4" />
+              <span>DPPS</span>
+              <ChevronRight className="h-4 w-4" />
+              <span className="text-slate-900 font-medium">Prevention Control</span>
+            </nav>
           </div>
           <div className="flex items-center gap-4">
-            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold">
-              JD
-            </div>
+            <Button variant="ghost" size="icon" className="relative hover:bg-slate-100 hidden md:flex">
+              <Bell className="h-5 w-5 text-slate-600" />
+              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" />
+            </Button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="relative h-9 w-9 rounded-full ml-2 focus-visible:ring-1 focus-visible:ring-primary">
+                  <Avatar className="h-9 w-9 border shadow-sm">
+                    <AvatarFallback className="bg-indigo-50 text-indigo-700 font-semibold">{initial}</AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56" align="end" forceMount>
+                <DropdownMenuLabel className="font-normal">
+                  <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium leading-none">{user.name}</p>
+                    <p className="text-xs leading-none text-muted-foreground">{user.email}</p>
+                  </div>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem>
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Settings</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => signOut()}>
+                  <LogOut className="mr-2 h-4 w-4 text-red-500" />
+                  <span className="text-red-500">Log out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
         <div className="container mx-auto p-8 max-w-7xl animate-in fade-in duration-500 relative">

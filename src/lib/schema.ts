@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -30,6 +30,22 @@ export const insertUserSchema = createInsertSchema(users).pick({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
+// Role Permissions table
+export const rolePermissions = pgTable("role_permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  role: text("role").notNull().unique(), // e.g., 'Auditor', 'AP Manager', 'ADMINISTRATOR'
+  allowedTabs: text("allowed_tabs").array(), // e.g., ['Dashboard', 'Reports']
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertRolePermissionSchema = createInsertSchema(rolePermissions).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type InsertRolePermission = z.infer<typeof insertRolePermissionSchema>;
+export type RolePermission = typeof rolePermissions.$inferSelect;
+
 // API Tokens table
 export const apiTokens = pgTable("api_tokens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -53,12 +69,24 @@ export type ApiToken = typeof apiTokens.$inferSelect;
 export const vendors = pgTable("vendors", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
+  taxId: text("tax_id"),
+  iban: text("iban"),
+  swiftBic: text("swift_bic"),
+  addressLine1: text("address_line_1"),
+  postalCode: text("postal_code"),
+  country: text("country"),
+  companyCode: text("company_code"),
+  phoneNumber: text("phone_number"),
+  email: text("email"),
   totalSpend: decimal("total_spend", { precision: 15, scale: 2 }).notNull().default("0"),
   duplicateCount: integer("duplicate_count").notNull().default(0),
   paymentTerms: text("payment_terms"),
   riskLevel: text("risk_level").notNull().default("low"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  taxIdIdx: index("vendor_tax_id_idx").on(table.taxId),
+  ibanIdx: index("vendor_iban_idx").on(table.iban),
+}));
 
 export const insertVendorSchema = createInsertSchema(vendors).omit({
   id: true,
@@ -266,4 +294,97 @@ export const insertRecoveryActivitySchema = createInsertSchema(recoveryActivitie
 
 export type InsertRecoveryActivity = z.infer<typeof insertRecoveryActivitySchema>;
 export type RecoveryActivity = typeof recoveryActivities.$inferSelect;
+// Customers table
+export const customers = pgTable("customers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerNumber: text("customer_number").notNull().unique(), // e.g. KUNNR
+  name: text("name").notNull(),
+  taxId: text("tax_id"),
+  billingAddress: text("billing_address"),
+  shippingAddress: text("shipping_address"),
+  email: text("email"),
+  phone: text("phone"),
+  iban: text("iban"),
+  companyCode: text("company_code"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  taxIdIdx: index("customer_tax_id_idx").on(table.taxId),
+  ibanIdx: index("customer_iban_idx").on(table.iban),
+}));
 
+export const insertCustomerSchema = createInsertSchema(customers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
+export type Customer = typeof customers.$inferSelect;
+
+// Financial Documents table
+export const financialDocuments = pgTable("financial_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  documentNumber: text("document_number").notNull(),
+  invoiceNumber: text("invoice_number").notNull(),
+  vendorId: varchar("vendor_id").references(() => vendors.id),
+  customerId: varchar("customer_id").references(() => customers.id),
+  invoiceDate: timestamp("invoice_date").notNull(),
+  postingDate: timestamp("posting_date"),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  currency: text("currency").notNull().default("USD"),
+  taxAmount: decimal("tax_amount", { precision: 15, scale: 2 }),
+  poNumber: text("po_number"),
+  companyCode: text("company_code"),
+  referenceNumber: text("reference_number"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => ({
+  docNumberIdx: index("fin_doc_number_idx").on(table.documentNumber),
+  invNumberIdx: index("fin_inv_number_idx").on(table.invoiceNumber),
+}));
+
+export const insertFinancialDocumentSchema = createInsertSchema(financialDocuments).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertFinancialDocument = z.infer<typeof insertFinancialDocumentSchema>;
+export type FinancialDocument = typeof financialDocuments.$inferSelect;
+
+// Upload Batches table
+export const uploadBatches = pgTable("upload_batches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  uploadedBy: varchar("uploaded_by").references(() => users.id),
+  erpType: text("erp_type").notNull(), // SAP, Dynamics, Oracle, Sage, Other
+  entityType: text("entity_type").notNull(), // Vendors, Customers, Financial
+  status: text("status").notNull().default("processing"), // processing, completed, error
+  totalRows: integer("total_rows").notNull().default(0),
+  errorRows: integer("error_rows").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertUploadBatchSchema = createInsertSchema(uploadBatches).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertUploadBatch = z.infer<typeof insertUploadBatchSchema>;
+export type UploadBatch = typeof uploadBatches.$inferSelect;
+
+// Duplicate Results table
+export const duplicateResults = pgTable("duplicate_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  doc1Id: varchar("doc1_id").notNull().references(() => financialDocuments.id),
+  doc2Id: varchar("doc2_id").notNull().references(() => financialDocuments.id),
+  similarityScore: integer("similarity_score").notNull(),
+  riskClassification: text("risk_classification").notNull(), // Low, Medium, High, Critical
+  explanation: text("explanation"), // JSON or text explanation of match
+  status: text("status").notNull().default("open"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertDuplicateResultSchema = createInsertSchema(duplicateResults).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertDuplicateResult = z.infer<typeof insertDuplicateResultSchema>;
+export type DuplicateResult = typeof duplicateResults.$inferSelect;

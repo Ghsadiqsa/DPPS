@@ -1,4 +1,3 @@
-// Database integration for Next.js with Neon
 import {
     users,
     vendors,
@@ -6,10 +5,14 @@ import {
     invoices,
     recoveryItems,
     caseActivities,
+    financialDocuments,
+    customers,
     type User,
     type InsertUser,
     type Vendor,
     type InsertVendor,
+    type Customer,
+    type FinancialDocument,
     type Case,
     type InsertCase,
     type Invoice,
@@ -32,6 +35,9 @@ export interface IStorage {
     getVendor(id: string): Promise<Vendor | undefined>;
     getVendorByName(name: string): Promise<Vendor | undefined>;
     getAllVendors(): Promise<Vendor[]>;
+    getRecentVendors(limit?: number): Promise<Vendor[]>;
+    getRecentCustomers(limit?: number): Promise<Customer[]>;
+    getRecentFinancialDocuments(limit?: number): Promise<FinancialDocument[]>;
     createVendor(vendor: InsertVendor): Promise<Vendor>;
     updateVendor(id: string, updates: Partial<InsertVendor>): Promise<Vendor | undefined>;
 
@@ -103,6 +109,18 @@ export class DatabaseStorage implements IStorage {
         return await db.select().from(vendors).orderBy(desc(vendors.totalSpend));
     }
 
+    async getRecentVendors(limitVal = 50): Promise<Vendor[]> {
+        return await db.select().from(vendors).orderBy(desc(vendors.createdAt)).limit(limitVal);
+    }
+
+    async getRecentCustomers(limitVal = 50): Promise<Customer[]> {
+        return await db.select().from(customers).orderBy(desc(customers.createdAt)).limit(limitVal);
+    }
+
+    async getRecentFinancialDocuments(limitVal = 50): Promise<FinancialDocument[]> {
+        return await db.select().from(financialDocuments).orderBy(desc(financialDocuments.createdAt)).limit(limitVal);
+    }
+
     async createVendor(vendor: InsertVendor): Promise<Vendor> {
         const [newVendor] = await db.insert(vendors).values(vendor).returning();
         return newVendor;
@@ -157,12 +175,31 @@ export class DatabaseStorage implements IStorage {
     }
 
     async findDuplicateInvoices(invoiceNumber: string, vendorId: string, amount: string): Promise<Invoice[]> {
-        return await db.select().from(invoices).where(
+        if (!amount || isNaN(Number(amount))) return [];
+        // Ground truth for duplicates is the historical dataset (financialDocuments). 
+        // We simulate sending them back as standard 'Invoice' objects so the detection engine understands them.
+        const docs = await db.select().from(financialDocuments).where(
             and(
-                eq(invoices.vendorId, vendorId),
-                sql`${invoices.amount}::numeric = ${amount}::numeric`
+                eq(financialDocuments.vendorId, vendorId),
+                sql`${financialDocuments.amount}::numeric = ${amount}::numeric`
             )
         );
+
+        return docs.map(d => ({
+            id: d.id,
+            invoiceNumber: d.invoiceNumber,
+            vendorId: d.vendorId!,
+            amount: d.amount,
+            invoiceDate: d.invoiceDate,
+            caseId: null,
+            docId: d.documentNumber,
+            status: "historical",
+            similarityScore: null,
+            isDuplicate: false,
+            matchedInvoiceId: null,
+            signals: null,
+            createdAt: d.createdAt,
+        } as unknown as Invoice));
     }
 
     async createInvoice(invoice: InsertInvoice): Promise<Invoice> {

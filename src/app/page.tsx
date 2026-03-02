@@ -100,15 +100,7 @@ export default function Dashboard() {
 
   const isLoading = isLoadingMetrics;
 
-  const [chartData] = useState([
-    { name: "Mon", prevented: 4000 },
-    { name: "Tue", prevented: 3000 },
-    { name: "Wed", prevented: 2000 },
-    { name: "Thu", prevented: 2780 },
-    { name: "Fri", prevented: 1890 },
-    { name: "Sat", prevented: 2390 },
-    { name: "Sun", prevented: 3490 },
-  ]);
+  const chartData = reportsData?.monthlyData || [];
 
   // Generate heatmap data client-side only to avoid hydration mismatch
   const [heatmapData, setHeatmapData] = useState<number[]>([]);

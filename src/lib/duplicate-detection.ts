@@ -37,6 +37,7 @@ export interface DetectionResult {
     riskLevel: RiskLevel;
     autoHold: boolean;
     signals: Signal[];
+    explanation: string;
     matchedInvoice: InvoiceData | null;
 }
 
@@ -49,6 +50,8 @@ export interface InvoiceData {
     invoiceDate: Date | string;
     legalEntity?: string;
     currency?: string;
+    companyCode?: string;
+    referenceNumber?: string;
 }
 
 export interface DetectionConfig {
@@ -140,6 +143,26 @@ export function detectDuplicate(
         value: `${(percentDiff * 100).toFixed(2)}% difference`,
     });
 
+    // 6. Composite Key Match (Vendor + Company Code + Reference Number)
+    const hasCompositeKeys = currentInvoice.companyCode && currentInvoice.referenceNumber &&
+        candidateInvoice.companyCode && candidateInvoice.referenceNumber;
+
+    const compositeMatch = hasCompositeKeys &&
+        vendorMatch &&
+        currentInvoice.companyCode === candidateInvoice.companyCode &&
+        currentInvoice.referenceNumber === candidateInvoice.referenceNumber;
+
+    if (compositeMatch) {
+        // Boosting the score heavily if the exact ERP composite key matches another document
+        score += 50;
+    }
+    signals.push({
+        name: 'Composite Key Match',
+        triggered: !!compositeMatch,
+        description: 'Vendor, Company Code, and Reference Number match exactly',
+        value: compositeMatch ? `${currentInvoice.vendorId}-${currentInvoice.companyCode}-${currentInvoice.referenceNumber}` : undefined,
+    });
+
     // Calculate final score (capped at 100)
     const finalScore = Math.min(100, Math.round(score));
 
@@ -149,11 +172,18 @@ export function detectDuplicate(
     // Determine if auto-hold applies
     const autoHold = finalScore >= config.criticalThreshold;
 
+    // Generate explanation
+    const triggeredSignals = signals.filter(s => s.triggered).map(s => s.name);
+    const explanation = triggeredSignals.length > 0
+        ? `Matched based on: ${triggeredSignals.join(', ')}.`
+        : 'No significant matches found.';
+
     return {
         score: finalScore,
         riskLevel,
         autoHold,
         signals,
+        explanation,
         matchedInvoice: candidateInvoice,
     };
 }
@@ -218,6 +248,8 @@ export function getRiskLevelDisplay(riskLevel: RiskLevel): {
  * Calculate Levenshtein similarity between two strings
  */
 export function levenshteinSimilarity(str1: string, str2: string): number {
+    str1 = String(str1 || '');
+    str2 = String(str2 || '');
     if (!str1 && !str2) return 1.0;
     if (!str1 || !str2) return 0.0;
 

@@ -158,11 +158,11 @@ export default function PaymentGate() {
             const getIdx = (patterns: string[]) =>
               headers.findIndex(h => patterns.some(p => h.toLowerCase().includes(p.toLowerCase())));
 
-            const idxInvoiceNum = getIdx(['Invoice_Reference', 'invoiceNumber', 'Reference']); // Prefer reference
-            const idxVendorId = getIdx(['Vendor_Number', 'vendorId', 'VendorID']);
-            const idxAmount = getIdx(['Invoice_Amount', 'amount', 'Total']);
-            const idxDate = getIdx(['Invoice_Date', 'date', 'DocumentDate']);
-            const idxInvoiceId = getIdx(['Invoice_ID', 'id']); // Fallback for reference if needed
+            const idxInvoiceNum = getIdx(['Invoice_Reference', 'invoice_reference', 'invoiceNumber', 'invoice_number', 'reference', 'ref']);
+            const idxVendorId = getIdx(['Vendor_Number', 'vendor_number', 'vendorId', 'VendorID', 'vendor']);
+            const idxAmount = getIdx(['Invoice_Amount', 'invoice_amount', 'amount', 'Total', 'value', 'price']);
+            const idxDate = getIdx(['Invoice_Date', 'invoice_date', 'date', 'DocumentDate', 'document_date']);
+            const idxInvoiceId = getIdx(['Invoice_ID', 'invoice_id', 'id']);
 
             // Default to 0,1,2,3 if no headers matched (simple CSV fallback)
             const isMapped = idxAmount !== -1 && idxDate !== -1;
@@ -171,8 +171,16 @@ export default function PaymentGate() {
               const row = rows[i].trim();
               if (!row) continue;
 
-              // Handle comma inside quotes? Simple split for now as data seems simple
-              const cols = row.split(',');
+              // Basic CSV parsing for quotes
+              const cols = [];
+              let currentVal = '';
+              let inQuotes = false;
+              for (let c = 0; c < row.length; c++) {
+                if (row[c] === '"') inQuotes = !inQuotes;
+                else if (row[c] === ',' && !inQuotes) { cols.push(currentVal.trim()); currentVal = ''; }
+                else currentVal += row[c];
+              }
+              cols.push(currentVal.trim());
 
               let num, ven, amt, dt;
 
@@ -182,21 +190,32 @@ export default function PaymentGate() {
                 amt = cols[idxAmount];
                 dt = cols[idxDate];
               } else {
-                // Fallback to strict index 0,1,2,3
-                if (cols.length >= 3) {
+                // Fallback to strict index 0,1,2,3 if there are enough columns
+                if (cols.length >= 4) {
                   num = cols[0];
                   ven = cols[1];
                   amt = cols[2];
                   dt = cols[3];
+                } else if (cols.length >= 2) {
+                  num = cols[0];
+                  ven = cols[0];
+                  amt = cols[1];
+                  dt = cols[1]; // extremely basic fallback
                 }
               }
 
-              if (amt && dt) {
+              if (amt && dt && amt.trim() !== '') {
+                const parsedAmt = parseFloat(amt.replace(/,/g, '')) || 0;
+                let parsedDate = dt;
+
+                // If it fails to be parsed as a date on the server it could crash, so give it a valid fallback format if empty
+                if (!parsedDate || parsedDate.trim() === '') parsedDate = new Date().toISOString().split('T')[0];
+
                 parsedInvoices.push({
                   invoiceNumber: num?.trim() || `INV-UNK-${i}`,
                   vendorId: ven?.trim() || 'V-UNKNOWN',
-                  amount: parseFloat(amt.trim()) || 0,
-                  invoiceDate: dt.trim(),
+                  amount: parsedAmt,
+                  invoiceDate: parsedDate,
                 });
               }
             }
