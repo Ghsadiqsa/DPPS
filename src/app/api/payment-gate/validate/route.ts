@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { paymentProposals } from '@/lib/schema';
+import { invoices, vendors } from '@/lib/schema';
+import { storage } from '@/lib/storage';
+import { eq, sql } from 'drizzle-orm';
 import {
     detectDuplicate,
     detectDuplicatesInProposal,
@@ -22,11 +24,9 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Merge user config with defaults
         const config: DetectionConfig = { ...DEFAULT_CONFIG, ...userConfig };
-
         const results: {
-            invoice: InvoiceData & { status?: string };
+            invoice: InvoiceData & { id?: string; status?: string };
             detection: DetectionResult | null;
             status: 'CLEAN' | 'DUPLICATE' | 'FLAGGED';
         }[] = [];
@@ -37,122 +37,128 @@ export async function POST(request: NextRequest) {
             config
         );
 
-        // Check each invoice against historical data
+        // Check each invoice
         for (let i = 0; i < invoicesToValidate.length; i++) {
-            const invoice = invoicesToValidate[i] as InvoiceData;
+            const rawInv = invoicesToValidate[i];
 
-            // Check for duplicates in the database via direct query to financialDocuments
-            const existingInvoices = await db.query.financialDocuments.findMany({
-                where: (docs, { eq, and, or }) => {
-                    const conditions = [];
-                    // We must filter broadly then run strict duplicate logic
-                    // The business rules are evaluated fully by detectDuplicate later.
-                    return undefined;
+            // Normalize amount
+            let amount = 0;
+            if (typeof rawInv.amount === 'number') {
+                amount = rawInv.amount;
+            } else {
+                amount = parseFloat(String(rawInv.amount).replace(/,/g, '').replace(/[^0-9.-]/g, '')) || 0;
+            }
+
+            // Normalize date safely
+            let invoiceDate: Date;
+            try {
+                if (rawInv.invoiceDate && typeof (rawInv.invoiceDate as any).getTime === 'function') {
+                    invoiceDate = rawInv.invoiceDate as Date;
+                } else if (rawInv.invoiceDate) {
+                    invoiceDate = new Date(rawInv.invoiceDate);
+                    if (isNaN(invoiceDate.getTime())) invoiceDate = new Date();
+                } else {
+                    invoiceDate = new Date();
                 }
-            });
-            // Actually, we should just fetch the recent invoices to compare against or use the storage wrapper properly.
-            // Oh, wait, the original code used `await storage.findDuplicateInvoices(invoice.invoiceNumber, invoice.vendorId, String(invoice.amount));`
+            } catch {
+                invoiceDate = new Date();
+            }
 
-            // Let me restore the storage import because we need it.
-            const { storage } = await import('@/lib/storage');
+            const currentInvoice: InvoiceData = {
+                ...rawInv,
+                amount,
+                invoiceDate,
+            };
 
-            const existingInvoicesRows = await storage.findDuplicateInvoices(
-                invoice.invoiceNumber,
-                invoice.vendorId,
-                String(invoice.amount)
+            const historicalCandidates = await storage.findDuplicateInvoices(
+                currentInvoice.invoiceNumber,
+                currentInvoice.vendorId,
+                String(amount)
             );
 
             let bestMatch: DetectionResult | null = null;
 
-            // Compare with historical invoices
-            for (const existing of existingInvoicesRows) {
-                const candidateInvoice: InvoiceData = {
-                    id: existing.id,
-                    invoiceNumber: existing.invoiceNumber,
-                    vendorId: existing.vendorId,
-                    amount: existing.amount,
-                    invoiceDate: existing.invoiceDate,
-                };
+            // Historical check
+            for (const cand of historicalCandidates) {
+                const res = detectDuplicate(currentInvoice, cand, config);
+                if (!bestMatch || res.score > bestMatch.score) bestMatch = res;
+            }
 
-                const result = detectDuplicate(invoice, candidateInvoice, config);
-
-                if (!bestMatch || result.score > bestMatch.score) {
-                    bestMatch = result;
+            // Proposal check
+            const pMatches = proposalDuplicates.get(i);
+            if (pMatches) {
+                for (const m of pMatches) {
+                    if (!bestMatch || m.score > bestMatch.score) bestMatch = m;
                 }
             }
 
-            // Also check proposal duplicates
-            const proposalMatches = proposalDuplicates.get(i);
-            if (proposalMatches) {
-                for (const match of proposalMatches) {
-                    if (!bestMatch || match.score > bestMatch.score) {
-                        bestMatch = match;
-                    }
-                }
-            }
-
-            // Determine status based on detection result
             let status: 'CLEAN' | 'DUPLICATE' | 'FLAGGED' = 'CLEAN';
             if (bestMatch) {
-                if (bestMatch.autoHold || bestMatch.riskLevel === 'critical') {
-                    status = 'DUPLICATE';
-                } else if (bestMatch.riskLevel === 'high' || bestMatch.riskLevel === 'medium') {
-                    status = 'FLAGGED';
-                }
+                if (bestMatch.autoHold || bestMatch.riskLevel === 'critical') status = 'DUPLICATE';
+                else if (bestMatch.riskLevel !== 'low') status = 'FLAGGED';
             }
 
             results.push({
-                invoice: { ...invoice, status },
+                invoice: currentInvoice,
                 detection: bestMatch,
-                status,
+                status
             });
         }
 
-        // 3. Upsert Vendors and Batch insert into invoices state machine
-        const vendorIds = Array.from(new Set(results.map(r => r.invoice.vendorId))).filter(Boolean);
-        if (vendorIds.length > 0) {
-            const vendorInserts = vendorIds.map(id => ({
-                id: id as string,
-                name: `Vendor ${id}`,
-                riskLevel: "low",
-            }));
-            await db.insert(require("@/lib/schema").vendors)
-                .values(vendorInserts)
-                .onConflictDoNothing({ target: require("@/lib/schema").vendors.id });
+        // Upsert vendors with explicit target
+        const vIds = Array.from(new Set(results.map(r => r.invoice.vendorId || 'UNKNOWN_VENDOR')));
+        for (const vid of vIds) {
+            try {
+                // Check if vendor exists
+                const [exists] = await db.select().from(vendors).where(eq(vendors.id, vid)).limit(1);
+                if (!exists) {
+                    await db.insert(vendors).values({
+                        id: vid,
+                        name: vid === 'UNKNOWN_VENDOR' ? 'Unknown Vendor' : `Vendor ${vid}`,
+                        riskLevel: 'low',
+                        totalSpend: "0",
+                        duplicateCount: 0
+                    }).onConflictDoNothing({ target: vendors.id });
+                }
+            } catch (err) {
+                console.error(`Vendor error for ${vid}:`, err);
+            }
         }
 
+        // Batch insert invoices
         const invoiceInserts = results.map(r => {
-            const parsedAmount = parseFloat(String(r.invoice.amount).replace(/,/g, '')) || 0;
+            const date = r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate : new Date();
+            const signals = r.detection?.signals?.filter(s => s.triggered).map(s => s.name) || [];
+
             return {
-                invoiceNumber: r.invoice.invoiceNumber || 'UNKNOWN',
-                vendorId: r.invoice.vendorId || 'UNKNOWN_VENDOR',
-                amount: parsedAmount.toString(),
-                invoiceDate: r.invoice.invoiceDate ? new Date(r.invoice.invoiceDate) : new Date(),
+                invoiceNumber: String(r.invoice.invoiceNumber || 'INV-UNK'),
+                vendorId: String(r.invoice.vendorId || 'UNKNOWN_VENDOR'),
+                amount: Number(r.invoice.amount).toFixed(2),
+                invoiceDate: date,
                 status: r.status === 'CLEAN' ? 'UPLOADED' : 'AUTO_FLAGGED',
                 isDuplicate: r.status !== 'CLEAN',
-                similarityScore: r.detection?.score || null,
-                signals: r.detection?.signals.filter(s => s.triggered).map(s => s.name) || [],
+                similarityScore: Math.round(r.detection?.score || 0),
+                signals: Array.isArray(signals) ? signals : [],
                 matchedInvoiceId: r.detection?.matchedInvoice?.id || null,
             };
         });
 
-        let insertedInvoices: any[] = [];
         if (invoiceInserts.length > 0) {
-            insertedInvoices = await db.insert(require("@/lib/schema").invoices).values(invoiceInserts).returning({
-                id: require("@/lib/schema").invoices.id,
-                invoiceNumber: require("@/lib/schema").invoices.invoiceNumber,
+            const inserted = await db.insert(invoices).values(invoiceInserts).returning({
+                id: invoices.id,
+                invoiceNumber: invoices.invoiceNumber,
+                amount: invoices.amount
+            });
+
+            // Map IDs back based on insertion order
+            results.forEach((r, idx) => {
+                if (inserted[idx]) {
+                    r.invoice.id = inserted[idx].id;
+                }
             });
         }
 
-        // Map the new DB UUIDs back to the results
-        results.forEach(r => {
-            const inserted = insertedInvoices.find(i => i.invoiceNumber === r.invoice.invoiceNumber);
-            if (inserted) {
-                r.invoice.id = inserted.id; // Attach actual DB UUID
-            }
-        });
-
-        // Summarize results
+        // Construct response
         const summary = {
             totalLines: results.length,
             approvedLines: results.filter(r => r.status === 'CLEAN').length,
@@ -161,43 +167,36 @@ export async function POST(request: NextRequest) {
             duplicatesDetected: results.filter(r => r.status !== 'CLEAN').length,
         };
 
-        // Separate duplicates by risk level
         const duplicates = results
-            .filter(r => r.detection !== null && r.status !== 'CLEAN')
+            .filter(r => r.status !== 'CLEAN')
             .map(r => ({
-                ...r.invoice,
-                status: r.status,
-                score: r.detection!.score,
-                riskLevel: r.detection!.riskLevel,
-                autoHold: r.detection!.autoHold,
-                signals: r.detection!.signals.filter(s => s.triggered),
-                matchedWith: r.detection!.matchedInvoice,
+                id: r.invoice.id,
+                invoiceNumber: r.invoice.invoiceNumber,
+                vendorId: r.invoice.vendorId,
+                amount: r.invoice.amount,
+                invoiceDate: r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate.toISOString() : r.invoice.invoiceDate,
+                status: r.status === 'DUPLICATE' ? 'held' : 'review',
+                score: r.detection?.score,
+                riskLevel: r.detection?.riskLevel,
+                autoHold: r.detection?.autoHold,
+                signals: r.detection?.signals?.filter(s => s.triggered) || [],
+                matchedWith: r.detection?.matchedInvoice,
             }));
 
         return NextResponse.json({
             ...summary,
             config,
             duplicates,
-            approvedForPayment: results
-                .filter(r => r.status === 'CLEAN')
-                .map(r => r.invoice),
-            heldItems: results
-                .filter(r => r.status === 'DUPLICATE')
-                .map(r => ({
-                    ...r.invoice,
-                    detection: r.detection,
-                })),
-            reviewItems: results
-                .filter(r => r.status === 'FLAGGED')
-                .map(r => ({
-                    ...r.invoice,
-                    detection: r.detection,
-                })),
+            approvedForPayment: results.filter(r => r.status === 'CLEAN').map(r => ({
+                ...r.invoice,
+                invoiceDate: r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate.toISOString() : r.invoice.invoiceDate
+            })),
         });
-    } catch (error) {
-        console.error('Error validating payment gate:', error);
+
+    } catch (error: any) {
+        console.error("Payment Gate Validation Error:", error);
         return NextResponse.json(
-            { error: 'Failed to validate payments' },
+            { error: "Validation failed", details: error.message || String(error) },
             { status: 500 }
         );
     }

@@ -175,15 +175,14 @@ export class DatabaseStorage implements IStorage {
     }
 
     async findDuplicateInvoices(invoiceNumber: string, vendorId: string, amount: string): Promise<Invoice[]> {
-        if (!amount || isNaN(Number(amount))) return [];
+        // If no identifying info, return empty
+        if (!invoiceNumber && !vendorId) return [];
+
         // Ground truth for duplicates is the historical dataset (financialDocuments). 
-        // We simulate sending them back as standard 'Invoice' objects so the detection engine understands them.
+        // We fetch candidates that match at least one identifying field to allow for fuzzy matching in JS.
         const docs = await db.select().from(financialDocuments).where(
-            and(
-                eq(financialDocuments.vendorId, vendorId),
-                sql`${financialDocuments.amount}::numeric = ${amount}::numeric`
-            )
-        );
+            sql`${financialDocuments.vendorId} = ${vendorId} OR ${financialDocuments.invoiceNumber} = ${invoiceNumber}`
+        ).limit(100); // Limit to avoid massive payloads, detectDuplicate will find the best ones.
 
         return docs.map(d => ({
             id: d.id,
@@ -191,6 +190,8 @@ export class DatabaseStorage implements IStorage {
             vendorId: d.vendorId!,
             amount: d.amount,
             invoiceDate: d.invoiceDate,
+            companyCode: d.companyCode,
+            referenceNumber: d.referenceNumber,
             caseId: null,
             docId: d.documentNumber,
             status: "historical",

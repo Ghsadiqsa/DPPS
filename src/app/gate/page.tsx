@@ -150,81 +150,56 @@ export default function PaymentGate() {
       if (file) {
         try {
           const text = await file.text();
-          const rows = text.split(/\r?\n/);
-          const parsedInvoices = [];
+          const rows = text.split(/\r?\n/).filter(line => line.trim() !== "");
+          if (rows.length < 2) throw new Error("File is empty or too short");
 
-          if (rows.length > 1) {
-            const headers = rows[0].split(',').map(h => h.trim());
-
-            // Helper to find index case-insensitively
-            const getIdx = (patterns: string[]) =>
-              headers.findIndex(h => patterns.some(p => h.toLowerCase().includes(p.toLowerCase())));
-
-            const idxInvoiceNum = getIdx(['Invoice_Reference', 'invoice_reference', 'invoiceNumber', 'invoice_number', 'reference', 'ref']);
-            const idxVendorId = getIdx(['Vendor_Number', 'vendor_number', 'vendorId', 'VendorID', 'vendor']);
-            const idxAmount = getIdx(['Invoice_Amount', 'invoice_amount', 'amount', 'Total', 'value', 'price']);
-            const idxDate = getIdx(['Invoice_Date', 'invoice_date', 'date', 'DocumentDate', 'document_date']);
-            const idxInvoiceId = getIdx(['Invoice_ID', 'invoice_id', 'id']);
-
-            // Default to 0,1,2,3 if no headers matched (simple CSV fallback)
-            const isMapped = idxAmount !== -1 && idxDate !== -1;
-
-            for (let i = 1; i < rows.length; i++) {
-              const row = rows[i].trim();
-              if (!row) continue;
-
-              // Basic CSV parsing for quotes
-              const cols = [];
-              let currentVal = '';
-              let inQuotes = false;
-              for (let c = 0; c < row.length; c++) {
-                if (row[c] === '"') inQuotes = !inQuotes;
-                else if (row[c] === ',' && !inQuotes) { cols.push(currentVal.trim()); currentVal = ''; }
-                else currentVal += row[c];
-              }
-              cols.push(currentVal.trim());
-
-              let num, ven, amt, dt;
-
-              if (isMapped) {
-                num = cols[idxInvoiceNum !== -1 ? idxInvoiceNum : (idxInvoiceId !== -1 ? idxInvoiceId : 0)];
-                ven = cols[idxVendorId !== -1 ? idxVendorId : 1];
-                amt = cols[idxAmount];
-                dt = cols[idxDate];
-              } else {
-                // Fallback to strict index 0,1,2,3 if there are enough columns
-                if (cols.length >= 4) {
-                  num = cols[0];
-                  ven = cols[1];
-                  amt = cols[2];
-                  dt = cols[3];
-                } else if (cols.length >= 2) {
-                  num = cols[0];
-                  ven = cols[0];
-                  amt = cols[1];
-                  dt = cols[1]; // extremely basic fallback
-                }
-              }
-
-              if (amt && dt && amt.trim() !== '') {
-                const parsedAmt = parseFloat(amt.replace(/,/g, '')) || 0;
-                let parsedDate = dt;
-
-                // If it fails to be parsed as a date on the server it could crash, so give it a valid fallback format if empty
-                if (!parsedDate || parsedDate.trim() === '') parsedDate = new Date().toISOString().split('T')[0];
-
-                parsedInvoices.push({
-                  invoiceNumber: num?.trim() || `INV-UNK-${i}`,
-                  vendorId: ven?.trim() || 'V-UNKNOWN',
-                  amount: parsedAmt,
-                  invoiceDate: parsedDate,
-                });
-              }
+          const splitCsvLine = (line: string) => {
+            const result = [];
+            let cur = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+              const char = line[i];
+              if (char === '"') inQuotes = !inQuotes;
+              else if (char === ',' && !inQuotes) {
+                result.push(cur.trim());
+                cur = '';
+              } else cur += char;
             }
-          }
+            result.push(cur.trim());
+            return result;
+          };
 
-          if (parsedInvoices.length > 0) {
-            invoicesPayload = parsedInvoices;
+          const headers = splitCsvLine(rows[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+          const getIdx = (patterns: string[]) => headers.findIndex(h => patterns.some(p => h.includes(p)));
+
+          const idxs = {
+            invoiceNum: getIdx(['invoicenumber', 'invoiceno', 'billnumber', 'docnumber', 'reference', 'ref', 'xblnr']),
+            vendorId: getIdx(['vendorid', 'vendor', 'vendornumber', 'supplierid', 'lifnr', 'vendorcode']),
+            amount: getIdx(['amount', 'total', 'value', 'price', 'wrbtr']),
+            date: getIdx(['date', 'invoicedate', 'billingdate', 'docdate', 'bldat']),
+            company: getIdx(['companycode', 'company', 'bukrs']),
+            reference: getIdx(['reference', 'ref', 'referencenumber', 'xblnr'])
+          };
+
+          const parsed = rows.slice(1).map((row, i) => {
+            const cols = splitCsvLine(row);
+            const getCol = (idx: number) => (idx !== -1 && idx < cols.length) ? cols[idx] : "";
+            const amtStr = getCol(idxs.amount);
+            const amt = parseFloat(amtStr.replace(/[^0-9.-]/g, '')) || 0;
+            const dt = getCol(idxs.date) || new Date().toISOString().split('T')[0];
+
+            return {
+              invoiceNumber: getCol(idxs.invoiceNum) || `INV-UNK-${i}`,
+              vendorId: getCol(idxs.vendorId) || 'V-UNKNOWN',
+              amount: amt,
+              invoiceDate: dt,
+              companyCode: getCol(idxs.company),
+              referenceNumber: getCol(idxs.reference)
+            };
+          });
+
+          if (parsed.length > 0) {
+            invoicesPayload = parsed;
           }
         } catch (err) {
           console.error("CSV parse error, using demo data", err);

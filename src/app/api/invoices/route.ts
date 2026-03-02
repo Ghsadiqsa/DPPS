@@ -6,10 +6,25 @@ export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const caseId = searchParams.get('caseId');
+        const statuses = searchParams.getAll('status');
 
-        const invoicesData = caseId
-            ? await storage.getInvoicesByCase(caseId)
-            : await storage.getAllInvoices();
+        let invoicesData;
+
+        if (caseId) {
+            invoicesData = await storage.getInvoicesByCase(caseId);
+        } else if (statuses.length > 0) {
+            // Handle multiple status filters
+            const { db } = await import('@/lib/db');
+            const { invoices } = await import('@/lib/schema');
+            const { inArray, desc } = await import('drizzle-orm');
+
+            invoicesData = await db.select()
+                .from(invoices)
+                .where(inArray(invoices.status, statuses))
+                .orderBy(desc(invoices.createdAt));
+        } else {
+            invoicesData = await storage.getAllInvoices();
+        }
 
         return NextResponse.json(invoicesData);
     } catch (error) {
