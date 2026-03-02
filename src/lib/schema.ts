@@ -349,6 +349,30 @@ export const insertFinancialDocumentSchema = createInsertSchema(financialDocumen
 export type InsertFinancialDocument = z.infer<typeof insertFinancialDocumentSchema>;
 export type FinancialDocument = typeof financialDocuments.$inferSelect;
 
+// Payment Proposals Staging Table
+export const paymentProposals = pgTable("payment_proposals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  batchId: varchar("batch_id").references(() => uploadBatches.id),
+  invoiceNumber: text("invoice_number").notNull(),
+  vendorId: text("vendor_id").notNull(), // text because it might not be formally in our system yet
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  invoiceDate: timestamp("invoice_date").notNull(),
+  companyCode: text("company_code"),
+  erpSource: text("erp_source"),
+  status: text("status").notNull().default("CLEAN"), // 'DUPLICATE', 'FLAGGED', 'CLEAN'
+  validationErrors: text("validation_errors").array(),
+  duplicateMatchId: varchar("duplicate_match_id"), // Reference to financialDocuments.id if matched
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertPaymentProposalSchema = createInsertSchema(paymentProposals).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertPaymentProposal = z.infer<typeof insertPaymentProposalSchema>;
+export type PaymentProposal = typeof paymentProposals.$inferSelect;
+
 // Upload Batches table
 export const uploadBatches = pgTable("upload_batches", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
