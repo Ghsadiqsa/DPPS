@@ -1,0 +1,551 @@
+{
+  "status": "SUCCESS",
+  "totalLines": 10,
+  "approvedLines": 5,
+  "heldLines": 3,
+  "reviewLines": 2,
+  "duplicatesDetected": 5,
+  "config": {
+    "criticalThreshold": 85,
+    "highThreshold": 70,
+    "mediumThreshold": 50,
+    "invoicePatternTrigger": 0.8,
+    "dateProximityDays": 7,
+    "fuzzyAmountTolerance": 0.005,
+    "legalEntityScope": "within"
+  },
+  "duplicates": [
+    {
+      "invoiceNumber": "INV-EXACT-1",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "1000.00",
+      "invoiceDate": "2024-01-01",
+      "companyCode": "CC-100",
+      "status": "DUPLICATE",
+      "score": 100,
+      "riskLevel": "critical",
+      "autoHold": true,
+      "signals": [
+        {
+          "name": "Exact Amount",
+          "triggered": true,
+          "description": "Amounts match exactly to the cent",
+          "value": "1000 = 1000"
+        },
+        {
+          "name": "Vendor Match",
+          "triggered": true,
+          "description": "Same vendor ID",
+          "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+        },
+        {
+          "name": "Invoice Pattern (Fuzzy)",
+          "triggered": true,
+          "description": "Invoice similarity > 80%",
+          "value": "100.0%"
+        },
+        {
+          "name": "Date Proximity",
+          "triggered": true,
+          "description": "Invoice dates within 7 days",
+          "value": "0 days apart"
+        }
+      ],
+      "matchedWith": {
+        "id": "9c4b217f-4d90-46a4-afbd-4b461c130aee",
+        "invoiceNumber": "INV-EXACT-1",
+        "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+        "amount": "1000.00",
+        "invoiceDate": "2024-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "invoiceNumber": "INV-EXACT-2",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "2000.00",
+      "invoiceDate": "2024-01-02",
+      "companyCode": "CC-100",
+      "status": "DUPLICATE",
+      "score": 100,
+      "riskLevel": "critical",
+      "autoHold": true,
+      "signals": [
+        {
+          "name": "Exact Amount",
+          "triggered": true,
+          "description": "Amounts match exactly to the cent",
+          "value": "2000 = 2000"
+        },
+        {
+          "name": "Vendor Match",
+          "triggered": true,
+          "description": "Same vendor ID",
+          "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+        },
+        {
+          "name": "Invoice Pattern (Fuzzy)",
+          "triggered": true,
+          "description": "Invoice similarity > 80%",
+          "value": "100.0%"
+        },
+        {
+          "name": "Date Proximity",
+          "triggered": true,
+          "description": "Invoice dates within 7 days",
+          "value": "0 days apart"
+        }
+      ],
+      "matchedWith": {
+        "id": "fb5b7bc3-80a6-4334-a457-6eb6a78ec79f",
+        "invoiceNumber": "INV-EXACT-2",
+        "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+        "amount": "2000.00",
+        "invoiceDate": "2024-01-02T00:00:00.000Z"
+      }
+    },
+    {
+      "invoiceNumber": "INV-EXACT-3",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "3000.00",
+      "invoiceDate": "2024-01-03",
+      "companyCode": "CC-100",
+      "status": "DUPLICATE",
+      "score": 100,
+      "riskLevel": "critical",
+      "autoHold": true,
+      "signals": [
+        {
+          "name": "Exact Amount",
+          "triggered": true,
+          "description": "Amounts match exactly to the cent",
+          "value": "3000 = 3000"
+        },
+        {
+          "name": "Vendor Match",
+          "triggered": true,
+          "description": "Same vendor ID",
+          "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+        },
+        {
+          "name": "Invoice Pattern (Fuzzy)",
+          "triggered": true,
+          "description": "Invoice similarity > 80%",
+          "value": "100.0%"
+        },
+        {
+          "name": "Date Proximity",
+          "triggered": true,
+          "description": "Invoice dates within 7 days",
+          "value": "0 days apart"
+        }
+      ],
+      "matchedWith": {
+        "id": "1bf4312d-275f-4c2d-a2e9-0a45dad831cf",
+        "invoiceNumber": "INV-EXACT-3",
+        "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+        "amount": "3000.00",
+        "invoiceDate": "2024-01-03T00:00:00.000Z"
+      }
+    },
+    {
+      "invoiceNumber": "INV-PARTIAL-1-X",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "4005.00",
+      "invoiceDate": "2024-01-04",
+      "companyCode": "CC-100",
+      "status": "FLAGGED",
+      "score": 54,
+      "riskLevel": "medium",
+      "autoHold": false,
+      "signals": [
+        {
+          "name": "Vendor Match",
+          "triggered": true,
+          "description": "Same vendor ID",
+          "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+        },
+        {
+          "name": "Date Proximity",
+          "triggered": true,
+          "description": "Invoice dates within 7 days",
+          "value": "1 days apart"
+        }
+      ],
+      "matchedWith": {
+        "invoiceNumber": "INV-PARTIAL-2",
+        "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+        "amount": "5001.00",
+        "invoiceDate": "2024-01-05",
+        "companyCode": "CC-100"
+      }
+    },
+    {
+      "invoiceNumber": "INV-PARTIAL-2",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "5001.00",
+      "invoiceDate": "2024-01-05",
+      "companyCode": "CC-100",
+      "status": "FLAGGED",
+      "score": 54,
+      "riskLevel": "medium",
+      "autoHold": false,
+      "signals": [
+        {
+          "name": "Vendor Match",
+          "triggered": true,
+          "description": "Same vendor ID",
+          "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+        },
+        {
+          "name": "Date Proximity",
+          "triggered": true,
+          "description": "Invoice dates within 7 days",
+          "value": "1 days apart"
+        }
+      ],
+      "matchedWith": {
+        "invoiceNumber": "INV-PARTIAL-1-X",
+        "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+        "amount": "4005.00",
+        "invoiceDate": "2024-01-04",
+        "companyCode": "CC-100"
+      }
+    }
+  ],
+  "approvedForPayment": [
+    {
+      "invoiceNumber": "ALPHA-100",
+      "vendorId": "V-101",
+      "amount": "111.00",
+      "invoiceDate": "2024-02-01",
+      "companyCode": "CC-200",
+      "status": "CLEAN"
+    },
+    {
+      "invoiceNumber": "BETA-200",
+      "vendorId": "V-202",
+      "amount": "222.00",
+      "invoiceDate": "2024-02-02",
+      "companyCode": "CC-200",
+      "status": "CLEAN"
+    },
+    {
+      "invoiceNumber": "GAMMA-300",
+      "vendorId": "V-303",
+      "amount": "333.00",
+      "invoiceDate": "2024-02-03",
+      "companyCode": "CC-200",
+      "status": "CLEAN"
+    },
+    {
+      "invoiceNumber": "DELTA-400",
+      "vendorId": "V-404",
+      "amount": "444.00",
+      "invoiceDate": "2024-02-04",
+      "companyCode": "CC-200",
+      "status": "CLEAN"
+    },
+    {
+      "invoiceNumber": "EPSILON-500",
+      "vendorId": "V-505",
+      "amount": "555.00",
+      "invoiceDate": "2024-02-05",
+      "companyCode": "CC-200",
+      "status": "CLEAN"
+    }
+  ],
+  "heldItems": [
+    {
+      "invoiceNumber": "INV-EXACT-1",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "1000.00",
+      "invoiceDate": "2024-01-01",
+      "companyCode": "CC-100",
+      "status": "DUPLICATE",
+      "detection": {
+        "score": 100,
+        "riskLevel": "critical",
+        "autoHold": true,
+        "signals": [
+          {
+            "name": "Exact Amount",
+            "triggered": true,
+            "description": "Amounts match exactly to the cent",
+            "value": "1000 = 1000"
+          },
+          {
+            "name": "Vendor Match",
+            "triggered": true,
+            "description": "Same vendor ID",
+            "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+          },
+          {
+            "name": "Invoice Pattern (Fuzzy)",
+            "triggered": true,
+            "description": "Invoice similarity > 80%",
+            "value": "100.0%"
+          },
+          {
+            "name": "Date Proximity",
+            "triggered": true,
+            "description": "Invoice dates within 7 days",
+            "value": "0 days apart"
+          },
+          {
+            "name": "Fuzzy Amount",
+            "triggered": false,
+            "description": "Amount difference < 0.5%",
+            "value": "0.00% difference"
+          },
+          {
+            "name": "Composite Key Match",
+            "triggered": false,
+            "description": "Vendor, Company Code, and Reference Number match exactly"
+          }
+        ],
+        "explanation": "Matched based on: Exact Amount, Vendor Match, Invoice Pattern (Fuzzy), Date Proximity.",
+        "matchedInvoice": {
+          "id": "9c4b217f-4d90-46a4-afbd-4b461c130aee",
+          "invoiceNumber": "INV-EXACT-1",
+          "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+          "amount": "1000.00",
+          "invoiceDate": "2024-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "invoiceNumber": "INV-EXACT-2",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "2000.00",
+      "invoiceDate": "2024-01-02",
+      "companyCode": "CC-100",
+      "status": "DUPLICATE",
+      "detection": {
+        "score": 100,
+        "riskLevel": "critical",
+        "autoHold": true,
+        "signals": [
+          {
+            "name": "Exact Amount",
+            "triggered": true,
+            "description": "Amounts match exactly to the cent",
+            "value": "2000 = 2000"
+          },
+          {
+            "name": "Vendor Match",
+            "triggered": true,
+            "description": "Same vendor ID",
+            "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+          },
+          {
+            "name": "Invoice Pattern (Fuzzy)",
+            "triggered": true,
+            "description": "Invoice similarity > 80%",
+            "value": "100.0%"
+          },
+          {
+            "name": "Date Proximity",
+            "triggered": true,
+            "description": "Invoice dates within 7 days",
+            "value": "0 days apart"
+          },
+          {
+            "name": "Fuzzy Amount",
+            "triggered": false,
+            "description": "Amount difference < 0.5%",
+            "value": "0.00% difference"
+          },
+          {
+            "name": "Composite Key Match",
+            "triggered": false,
+            "description": "Vendor, Company Code, and Reference Number match exactly"
+          }
+        ],
+        "explanation": "Matched based on: Exact Amount, Vendor Match, Invoice Pattern (Fuzzy), Date Proximity.",
+        "matchedInvoice": {
+          "id": "fb5b7bc3-80a6-4334-a457-6eb6a78ec79f",
+          "invoiceNumber": "INV-EXACT-2",
+          "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+          "amount": "2000.00",
+          "invoiceDate": "2024-01-02T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "invoiceNumber": "INV-EXACT-3",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "3000.00",
+      "invoiceDate": "2024-01-03",
+      "companyCode": "CC-100",
+      "status": "DUPLICATE",
+      "detection": {
+        "score": 100,
+        "riskLevel": "critical",
+        "autoHold": true,
+        "signals": [
+          {
+            "name": "Exact Amount",
+            "triggered": true,
+            "description": "Amounts match exactly to the cent",
+            "value": "3000 = 3000"
+          },
+          {
+            "name": "Vendor Match",
+            "triggered": true,
+            "description": "Same vendor ID",
+            "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+          },
+          {
+            "name": "Invoice Pattern (Fuzzy)",
+            "triggered": true,
+            "description": "Invoice similarity > 80%",
+            "value": "100.0%"
+          },
+          {
+            "name": "Date Proximity",
+            "triggered": true,
+            "description": "Invoice dates within 7 days",
+            "value": "0 days apart"
+          },
+          {
+            "name": "Fuzzy Amount",
+            "triggered": false,
+            "description": "Amount difference < 0.5%",
+            "value": "0.00% difference"
+          },
+          {
+            "name": "Composite Key Match",
+            "triggered": false,
+            "description": "Vendor, Company Code, and Reference Number match exactly"
+          }
+        ],
+        "explanation": "Matched based on: Exact Amount, Vendor Match, Invoice Pattern (Fuzzy), Date Proximity.",
+        "matchedInvoice": {
+          "id": "1bf4312d-275f-4c2d-a2e9-0a45dad831cf",
+          "invoiceNumber": "INV-EXACT-3",
+          "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+          "amount": "3000.00",
+          "invoiceDate": "2024-01-03T00:00:00.000Z"
+        }
+      }
+    }
+  ],
+  "reviewItems": [
+    {
+      "invoiceNumber": "INV-PARTIAL-1-X",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "4005.00",
+      "invoiceDate": "2024-01-04",
+      "companyCode": "CC-100",
+      "status": "FLAGGED",
+      "detection": {
+        "score": 54,
+        "riskLevel": "medium",
+        "autoHold": false,
+        "signals": [
+          {
+            "name": "Exact Amount",
+            "triggered": false,
+            "description": "Amounts match exactly to the cent",
+            "value": "4005 ≠ 5001"
+          },
+          {
+            "name": "Vendor Match",
+            "triggered": true,
+            "description": "Same vendor ID",
+            "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+          },
+          {
+            "name": "Invoice Pattern (Fuzzy)",
+            "triggered": false,
+            "description": "Invoice similarity > 80%",
+            "value": "80.0%"
+          },
+          {
+            "name": "Date Proximity",
+            "triggered": true,
+            "description": "Invoice dates within 7 days",
+            "value": "1 days apart"
+          },
+          {
+            "name": "Fuzzy Amount",
+            "triggered": false,
+            "description": "Amount difference < 0.5%",
+            "value": "19.92% difference"
+          },
+          {
+            "name": "Composite Key Match",
+            "triggered": false,
+            "description": "Vendor, Company Code, and Reference Number match exactly"
+          }
+        ],
+        "explanation": "Matched based on: Vendor Match, Date Proximity.",
+        "matchedInvoice": {
+          "invoiceNumber": "INV-PARTIAL-2",
+          "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+          "amount": "5001.00",
+          "invoiceDate": "2024-01-05",
+          "companyCode": "CC-100"
+        }
+      }
+    },
+    {
+      "invoiceNumber": "INV-PARTIAL-2",
+      "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+      "amount": "5001.00",
+      "invoiceDate": "2024-01-05",
+      "companyCode": "CC-100",
+      "status": "FLAGGED",
+      "detection": {
+        "score": 54,
+        "riskLevel": "medium",
+        "autoHold": false,
+        "signals": [
+          {
+            "name": "Exact Amount",
+            "triggered": false,
+            "description": "Amounts match exactly to the cent",
+            "value": "5001 ≠ 4005"
+          },
+          {
+            "name": "Vendor Match",
+            "triggered": true,
+            "description": "Same vendor ID",
+            "value": "4d78c855-cbde-44d1-bf8b-3e3e29509511"
+          },
+          {
+            "name": "Invoice Pattern (Fuzzy)",
+            "triggered": false,
+            "description": "Invoice similarity > 80%",
+            "value": "80.0%"
+          },
+          {
+            "name": "Date Proximity",
+            "triggered": true,
+            "description": "Invoice dates within 7 days",
+            "value": "1 days apart"
+          },
+          {
+            "name": "Fuzzy Amount",
+            "triggered": false,
+            "description": "Amount difference < 0.5%",
+            "value": "19.92% difference"
+          },
+          {
+            "name": "Composite Key Match",
+            "triggered": false,
+            "description": "Vendor, Company Code, and Reference Number match exactly"
+          }
+        ],
+        "explanation": "Matched based on: Vendor Match, Date Proximity.",
+        "matchedInvoice": {
+          "invoiceNumber": "INV-PARTIAL-1-X",
+          "vendorId": "4d78c855-cbde-44d1-bf8b-3e3e29509511",
+          "amount": "4005.00",
+          "invoiceDate": "2024-01-04",
+          "companyCode": "CC-100"
+        }
+      }
+    }
+  ]
+}

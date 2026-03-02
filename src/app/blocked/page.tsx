@@ -12,9 +12,8 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
-import { Search, Filter, ArrowRight, AlertCircle, MoreHorizontal } from "lucide-react";
+import { Search, Filter, ArrowRight, AlertCircle, MoreHorizontal, Lock } from "lucide-react";
 import { useState } from "react";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -35,20 +34,15 @@ import {
 } from "@/components/ui/hover-card";
 import { BrainCircuit, LineChart, History, Building2 } from "lucide-react";
 
-export default function PrePayCockpit() {
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+export default function BlockedPaymentsCockpit() {
   const [comments, setComments] = useState<Record<string, string>>({});
   const [filterType, setFilterType] = useState<string>("All");
 
   // Fetch invoices from API in targeted states
   const { data: invoicesData, isLoading, refetch } = useQuery({
-    queryKey: ["invoices", filterType],
+    queryKey: ["blocked-invoices", filterType],
     queryFn: async () => {
-      // For MVP we just fetch all that need review, filterType can refine later
-      const params = new URLSearchParams();
-      params.append('status', 'UNDER_INVESTIGATION');
-      params.append('status', 'AUTO_FLAGGED');
-      const res = await fetch(`/api/invoices?${params.toString()}`);
+      const res = await fetch(`/api/invoices?status=BLOCKED`);
       if (!res.ok) throw new Error("Failed to fetch invoices");
       return res.json();
     }
@@ -77,76 +71,19 @@ export default function PrePayCockpit() {
     { label: "Vndr Master Error", count: 3, color: "bg-rose-500" },
   ];
 
-  const toggleSelectAll = () => {
-    if (selectedIds.length === invoicesList.length && invoicesList.length > 0) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(invoicesList.map((c) => c.id));
-    }
-  };
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    );
-  };
-
-  const [isTransitioning, setIsTransitioning] = useState(false);
-
-  const handleBulkAction = async (action: 'BLOCKED' | 'CLEARED' | 'RECOVERY_REQUIRED') => {
-    if (selectedIds.length === 0) {
-      toast.error("Please select at least one invoice");
-      return;
-    }
-
-    setIsTransitioning(true);
-    try {
-      const res = await fetch('/api/invoices/transition', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          invoiceIds: selectedIds,
-          targetStatus: action,
-        })
-      });
-
-      if (!res.ok) throw new Error("Transition failed");
-
-      toast.success(`Successfully moved ${selectedIds.length} items.`);
-      setSelectedIds([]);
-      refetch();
-    } catch (err) {
-      toast.error("Failed to update invoice statuses");
-    } finally {
-      setIsTransitioning(false);
-    }
-  };
-
   return (
 
     <div className="space-y-8">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold font-heading text-foreground tracking-tight">Open Potential Duplicates</h1>
+          <h1 className="text-3xl font-bold font-heading text-foreground tracking-tight flex items-center gap-3">
+            <Lock className="text-destructive h-8 w-8" /> Blocked for Payment
+          </h1>
           <p className="text-muted-foreground mt-2">
-            Review and resolve high-risk payment proposals before they are released.
+            Audit view of all invoices currently held by the system or analysts.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {selectedIds.length > 0 && (
-            <div className="flex items-center gap-2 bg-primary/5 p-1.5 rounded-lg border border-primary/20 mr-2">
-              <span className="text-xs font-bold px-2 text-primary">{selectedIds.length} Selected</span>
-              <Button size="sm" variant="destructive" onClick={() => handleBulkAction('BLOCKED')} disabled={isTransitioning} className="h-8 text-xs font-bold">
-                Confirm Duplicate (Block)
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => handleBulkAction('CLEARED')} disabled={isTransitioning} className="h-8 text-xs font-bold text-emerald-600 border-emerald-200 bg-emerald-50 hover:bg-emerald-100">
-                Release
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => handleBulkAction('RECOVERY_REQUIRED')} disabled={isTransitioning} className="h-8 text-xs font-bold bg-amber-100 text-amber-800 hover:bg-amber-200">
-                Mark Paid Duplicate
-              </Button>
-            </div>
-          )}
           <Button variant="outline" size="sm" className="font-bold">
             <Filter className="mr-2 h-4 w-4" /> Filter
           </Button>
@@ -188,43 +125,30 @@ export default function PrePayCockpit() {
         <Table>
           <TableHeader className="bg-muted/50">
             <TableRow>
-              <TableHead className="w-[40px]">
-                <Checkbox
-                  checked={selectedIds.length === invoicesList.length && invoicesList.length > 0}
-                  onCheckedChange={toggleSelectAll}
-                />
-              </TableHead>
               <TableHead className="w-[100px]">Invoice ID</TableHead>
               <TableHead>Vendor</TableHead>
               <TableHead>Invoice #</TableHead>
               <TableHead>Amount</TableHead>
-              <TableHead className="w-[300px]">Analyst Notes</TableHead>
+              <TableHead className="w-[300px]">Block Reason / Notes</TableHead>
               <TableHead>Risk Score</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="text-right">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
                   Loading invoices...
                 </TableCell>
               </TableRow>
             ) : invoicesList.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
-                  No open investigations found
+                <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                  No blocked payments found
                 </TableCell>
               </TableRow>
             ) : invoicesList.map((c: InvoiceItem) => (
-              <TableRow key={c.id} className="group hover:bg-muted/30 transition-colors">
-                <TableCell>
-                  <Checkbox
-                    checked={selectedIds.includes(c.id)}
-                    onCheckedChange={() => toggleSelect(c.id)}
-                  />
-                </TableCell>
+              <TableRow key={c.id} className="group hover:bg-red-50/30 transition-colors">
                 <TableCell className="font-mono text-[10px] font-bold">{c.id.slice(0, 8)}</TableCell>
                 <TableCell className="font-semibold text-sm">
                   <HoverCard>
@@ -327,21 +251,10 @@ export default function PrePayCockpit() {
                   </div>
                 </TableCell>
                 <TableCell>
-                  <Badge variant={c.status === "AUTO_FLAGGED" ? "destructive" : "secondary"} className="text-[10px] font-bold uppercase tracking-tighter">
+                  <Badge variant="destructive" className="bg-red-600 hover:bg-red-700 text-[10px] font-bold uppercase tracking-tighter shadow-sm flex items-center gap-1 w-fit">
+                    <Lock className="h-3 w-3" />
                     {c.status.replace('_', ' ')}
                   </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <Link href={`/cases/${c.id}`}>
-                      <Button size="sm" variant="ghost" className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100">
-                        <ArrowRight className="h-4 w-4" />
-                      </Button>
-                    </Link>
-                    <Button size="sm" variant="ghost" className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </div>
                 </TableCell>
               </TableRow>
             ))}

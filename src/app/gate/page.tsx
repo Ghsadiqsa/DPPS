@@ -12,6 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -45,6 +46,7 @@ interface ValidationResult {
 }
 
 interface DetectedDuplicate {
+  id?: string;
   invoiceNumber: string;
   vendorId: string;
   amount: number;
@@ -79,8 +81,8 @@ export default function PaymentGate() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isBlocking, setIsBlocking] = useState(false);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // State for analysis results
   // State for analysis results
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -260,6 +262,54 @@ export default function PaymentGate() {
       });
       console.error(error);
     }
+  };
+  const handleBulkStateTransition = async (targetStatus: string) => {
+    if (selectedIds.length === 0) return;
+    setIsBlocking(true);
+    try {
+      const response = await fetch('/api/invoices/transition', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          invoiceIds: selectedIds,
+          targetStatus
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Transition failed');
+      }
+
+      const label = targetStatus === 'UNDER_INVESTIGATION' ? 'Investigation' : 'Blocked';
+      toast.success(`Successfully moved ${selectedIds.length} items to ${label}`);
+
+      // Remove from view
+      if (validationResult) {
+        setValidationResult({
+          ...validationResult,
+          duplicates: validationResult.duplicates.filter(d => d.id && !selectedIds.includes(d.id))
+        });
+      }
+      setSelectedIds([]);
+    } catch (err) {
+      toast.error('Failed to transition invoice states.');
+    } finally {
+      setIsBlocking(false);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (!validationResult) return;
+    const validIds = validationResult.duplicates.map(d => d.id).filter(id => id != null) as string[];
+    if (selectedIds.length === validIds.length && validIds.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(validIds);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
   };
 
   const triggerFileSelect = () => {
@@ -720,16 +770,60 @@ export default function PaymentGate() {
                         </CardTitle>
                         <CardDescription>Review the following lines before releasing the payment</CardDescription>
                       </div>
-                      <Badge variant="destructive" className="font-black px-3 py-1">{validationResult?.duplicatesDetected} FLAGS</Badge>
+                      <div className="flex gap-2 items-center">
+                        {selectedIds.length > 0 && (
+                          <div className="hidden md:flex items-center gap-2">
+                            <span className="text-xs font-bold text-muted-foreground mr-2">{selectedIds.length} selected</span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs font-bold border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 uppercase"
+                              onClick={() => handleBulkStateTransition('UNDER_INVESTIGATION')}
+                              disabled={isBlocking}
+                            >
+                              Requires Further Investigation
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              className="h-8 text-xs font-bold uppercase"
+                              onClick={() => handleBulkStateTransition('BLOCKED')}
+                              disabled={isBlocking}
+                            >
+                              Block for Payment
+                            </Button>
+                          </div>
+                        )}
+                        <Badge variant="destructive" className="font-black px-3 py-1">{validationResult?.duplicatesDetected} FLAGS</Badge>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="p-0">
+                    <div className="bg-muted/30 px-5 py-2 border-b flex items-center gap-3">
+                      <Checkbox
+                        checked={
+                          validationResult?.duplicates &&
+                          selectedIds.length > 0 &&
+                          selectedIds.length === validationResult.duplicates.filter(d => d.id).length
+                        }
+                        onCheckedChange={toggleSelectAll}
+                      />
+                      <span className="text-xs font-semibold text-muted-foreground uppercase">Select All</span>
+                    </div>
                     <div className="divide-y">
                       {validationResult?.duplicates.map((dup, idx) => {
-                        const uniqueKey = `${dup.invoiceNumber}-${idx}`;
+                        const uniqueKey = dup.id || `${dup.invoiceNumber}-${idx}`;
                         return (
-                          <div key={uniqueKey} className="p-5 hover:bg-muted/10 transition-colors">
-                            <div className="flex flex-col gap-4">
+                          <div key={uniqueKey} className="p-5 hover:bg-muted/10 transition-colors flex gap-4">
+                            <div className="pt-1">
+                              {dup.id && (
+                                <Checkbox
+                                  checked={selectedIds.includes(dup.id)}
+                                  onCheckedChange={() => toggleSelect(dup.id!)}
+                                />
+                              )}
+                            </div>
+                            <div className="flex-1 flex flex-col gap-4">
                               <div className="flex flex-col md:flex-row justify-between gap-4">
                                 <div className="space-y-1">
                                   <div className="flex items-center gap-2">
@@ -832,15 +926,15 @@ export default function PaymentGate() {
                   <Button
                     className="flex-1 font-bold h-12 shadow-lg active:scale-[0.98] transition-transform"
                     variant="destructive"
-                    onClick={handleBlockFlagged}
-                    disabled={isBlocking}
+                    onClick={() => handleBulkStateTransition('BLOCKED')}
+                    disabled={isBlocking || selectedIds.length === 0}
                   >
                     {isBlocking ? (
                       <>
                         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
                         Processing...
                       </>
-                    ) : "Block Flagged Payments"}
+                    ) : "Block Selected Payments"}
                   </Button>
                   <Button
                     className="flex-1 font-bold h-12 shadow-md active:scale-[0.98] transition-transform"

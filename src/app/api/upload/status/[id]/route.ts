@@ -25,8 +25,8 @@ export async function GET(
             status: batch.status,
             totalRows: batch.totalRows,
             errorRows: batch.errorRows,
-            completed: batch.status === 'completed' || batch.status === 'completed_with_errors' || batch.status === 'error',
-            success: batch.status === 'completed' || batch.status === 'completed_with_errors'
+            completed: batch.status === 'completed' || batch.status === 'completed_with_errors' || batch.status === 'error' || batch.status === 'pending_review',
+            success: batch.status === 'completed' || batch.status === 'completed_with_errors' || batch.status === 'pending_review'
         });
     } catch (error) {
         console.error("Error fetching batch status:", error);

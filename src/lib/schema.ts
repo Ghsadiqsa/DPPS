@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, boolean, index, jsonb } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -81,11 +81,13 @@ export const vendors = pgTable("vendors", {
   totalSpend: decimal("total_spend", { precision: 15, scale: 2 }).notNull().default("0"),
   duplicateCount: integer("duplicate_count").notNull().default(0),
   paymentTerms: text("payment_terms"),
+  vendorCode: text("vendor_code"),
   riskLevel: text("risk_level").notNull().default("low"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => ({
   taxIdIdx: index("vendor_tax_id_idx").on(table.taxId),
   ibanIdx: index("vendor_iban_idx").on(table.iban),
+  vendorCodeIdx: index("vendor_code_idx").on(table.vendorCode),
 }));
 
 export const insertVendorSchema = createInsertSchema(vendors).omit({
@@ -137,11 +139,14 @@ export const invoices = pgTable("invoices", {
   amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
   invoiceDate: timestamp("invoice_date").notNull(),
   docId: text("doc_id"),
-  status: text("status").notNull().default("pending"),
+  status: text("status").notNull().default("UPLOADED"), // UPLOADED, AUTO_FLAGGED, UNDER_INVESTIGATION, BLOCKED, CLEARED, PAID_DUPLICATE, RECOVERY_REQUIRED
   similarityScore: integer("similarity_score"),
   isDuplicate: boolean("is_duplicate").notNull().default(false),
   matchedInvoiceId: varchar("matched_invoice_id"),
   signals: text("signals").array(),
+  investigationNotes: text("investigation_notes"),
+  statusUpdatedAt: timestamp("status_updated_at").defaultNow(),
+  statusUpdatedBy: varchar("status_updated_by").references(() => users.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -379,7 +384,7 @@ export const uploadBatches = pgTable("upload_batches", {
   uploadedBy: varchar("uploaded_by").references(() => users.id),
   erpType: text("erp_type").notNull(), // SAP, Dynamics, Oracle, Sage, Other
   entityType: text("entity_type").notNull(), // Vendors, Customers, Financial
-  status: text("status").notNull().default("processing"), // processing, completed, error
+  status: text("status").notNull().default("processing"), // processing, pending_review, completed, error
   totalRows: integer("total_rows").notNull().default(0),
   errorRows: integer("error_rows").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -392,6 +397,24 @@ export const insertUploadBatchSchema = createInsertSchema(uploadBatches).omit({
 
 export type InsertUploadBatch = z.infer<typeof insertUploadBatchSchema>;
 export type UploadBatch = typeof uploadBatches.$inferSelect;
+
+// Historical Data Staging Table (Preview Before Save Phase 7)
+export const historicalStaging = pgTable("historical_staging", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  batchId: varchar("batch_id").notNull().references(() => uploadBatches.id),
+  entityType: text("entity_type").notNull(), // 'vendors', 'customers', or 'financial_documents'
+  rowData: jsonb("row_data").notNull(), // The loosely parsed data ready for the entity table
+  validationErrors: text("validation_errors").array(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertHistoricalStagingSchema = createInsertSchema(historicalStaging).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertHistoricalStaging = z.infer<typeof insertHistoricalStagingSchema>;
+export type HistoricalStaging = typeof historicalStaging.$inferSelect;
 
 // Duplicate Results table
 export const duplicateResults = pgTable("duplicate_results", {

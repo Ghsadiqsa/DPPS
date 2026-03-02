@@ -39,15 +39,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 interface RecoveryItem {
   id: string;
-  vendorId: string;
-  amount: number;
-  status: 'initiated' | 'contacted' | 'validated' | 'recovered' | 'written_off';
-  initiatedDate: string;
-  vendor?: { name: string };
-  invoice?: { invoiceNumber: string };
-  notes?: string;
-  // Computed on frontend or backend
-  aging?: string;
+  invoiceNumber: string;
+  amount: string;
+  status: string; // From Invoice
+  vendor: {
+    name: string;
+    id: string;
+  };
+  signals?: string[];
+  investigationNotes?: string;
+  statusUpdatedAt?: string;
 }
 
 interface Activity {
@@ -70,31 +71,36 @@ export default function Recovery() {
   }, []);
 
   // Fetch recovery items from API
-  const { data: recoveryItems = [], isLoading } = useQuery<RecoveryItem[]>({
-    queryKey: ["/api/recovery"],
+  const { data: recoveryData = [], isLoading } = useQuery({
+    queryKey: ["recovery-invoices"],
     queryFn: async () => {
-      const res = await fetch("/api/recovery");
+      const res = await fetch("/api/invoices?status=RECOVERY_REQUIRED");
       if (!res.ok) throw new Error("Failed to fetch recovery items");
       return res.json();
     }
   });
 
+  const recoveryItems = (Array.isArray(recoveryData) ? recoveryData : []) as RecoveryItem[];
+
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status, notes }: { id: string, status: string, notes?: string }) => {
-      const res = await fetch(`/api/recovery/${id}`, {
-        method: 'PATCH',
+      // NOTE: For MVP, transitioning a recovery status just pushes an investigation note or 
+      // could move it out of RECOVERY_REQUIRED to CLEARED/etc. We mock the inline status 
+      // transition for now or just treat it as an Activity Log. 
+      const res = await fetch(`/api/invoices/transition`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          status,
-          action: `Status updated to ${status}`,
-          activityNotes: notes
+          invoiceIds: [id],
+          targetStatus: status, // e.g. "CLEARED" if recovered
+          notes: `Recovery Status Update: ${notes || status}`
         }),
       });
       if (!res.ok) throw new Error("Failed to update status");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/recovery"] });
+      queryClient.invalidateQueries({ queryKey: ["recovery-invoices"] });
       toast.success("Status Updated");
     },
     onError: () => {
@@ -113,13 +119,14 @@ export default function Recovery() {
     try {
       switch (exportFormat) {
         case "excel":
-          const worksheet = XLSX.utils.json_to_sheet(recoveryItems.map(item => ({
-            "Case ID": item.id,
+          const worksheet = XLSX.utils.json_to_sheet(recoveryItems.map((item: RecoveryItem) => ({
+            "Invoice ID": item.id,
+            "Invoice #": item.invoiceNumber,
             "Vendor": item.vendor?.name || "N/A",
-            "Amount": item.amount,
-            "Detected Date": item.initiatedDate,
+            "Amount": Number(item.amount),
+            "Marked For Recovery Date": item.statusUpdatedAt || "N/A",
             "Status": item.status,
-            "Aging": item.aging || calculateAging(item.initiatedDate)
+            "Aging": item.statusUpdatedAt ? calculateAging(item.statusUpdatedAt) : "N/A"
           })));
 
           const workbook = XLSX.utils.book_new();
@@ -141,14 +148,15 @@ export default function Recovery() {
     <TotalAmount>${recoveryItems.reduce((sum, item) => sum + Number(item.amount), 0)}</TotalAmount>
   </Summary>
   <Cases>
-    ${recoveryItems.map(item => `
+    ${recoveryItems.map((item: RecoveryItem) => `
     <Case>
       <ID>${item.id}</ID>
+      <InvoiceNumber>${item.invoiceNumber}</InvoiceNumber>
       <Vendor>${item.vendor?.name || "N/A"}</Vendor>
       <Amount>${item.amount}</Amount>
-      <Date>${item.initiatedDate}</Date>
+      <Date>${item.statusUpdatedAt || "N/A"}</Date>
       <Status>${item.status}</Status>
-      <Aging>${item.aging || calculateAging(item.initiatedDate)}</Aging>
+      <Aging>${item.statusUpdatedAt ? calculateAging(item.statusUpdatedAt) : "N/A"}</Aging>
     </Case>`).join('')}
   </Cases>
 </RecoveryReport>`;
@@ -157,10 +165,10 @@ export default function Recovery() {
 
         case "csv":
         default:
-          const headers = "Case ID,Vendor,Amount,Detected Date,Status,Aging\n";
-          const rows = recoveryItems.map((item) => {
+          const headers = "Invoice ID,Invoice Number,Vendor,Amount,Detected Date,Status,Aging\n";
+          const rows = recoveryItems.map((item: RecoveryItem) => {
             const field = (val: any) => `"${String(val || '').replace(/"/g, '""')}"`;
-            return `${field(item.id)},${field(item.vendor?.name)},${item.amount},${field(mounted ? new Date(item.initiatedDate).toLocaleDateString() : item.initiatedDate)},${field(item.status)},${field(item.aging)}`;
+            return `${field(item.id)},${field(item.invoiceNumber)},${field(item.vendor?.name)},${item.amount},${field(mounted && item.statusUpdatedAt ? new Date(item.statusUpdatedAt).toLocaleDateString() : item.statusUpdatedAt || 'N/A')},${field(item.status)},${field(item.statusUpdatedAt ? calculateAging(item.statusUpdatedAt) : "N/A")}`;
           }).join("\n");
           downloadBlob("\uFEFF" + headers + rows, "text/csv;charset=utf-8;", "csv", fileName);
           break;
@@ -251,32 +259,30 @@ export default function Recovery() {
                   </div>
                 </TableCell>
               </TableRow>
-            ) : recoveryItems.map((item) => (
+            ) : recoveryItems.map((item: RecoveryItem) => (
               <TableRow key={item.id}>
-                <TableCell className="font-mono text-xs">{item.id.substring(0, 8)}</TableCell>
-                <TableCell className="font-medium">{item.vendor?.name || "Unknown Vendor"}</TableCell>
-                <TableCell className="font-mono font-bold">
-                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(item.amount))}
+                <TableCell className="font-mono text-xs font-bold">{item.id.substring(0, 8)}</TableCell>
+                <TableCell className="font-semibold text-sm">{item.vendor?.name || "Unknown Vendor"}</TableCell>
+                <TableCell className="font-mono font-bold text-red-600">
+                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(item.amount) || 0)}
                 </TableCell>
-                <TableCell>{mounted ? new Date(item.initiatedDate).toLocaleDateString() : '---'}</TableCell>
+                <TableCell>{mounted && item.statusUpdatedAt ? new Date(item.statusUpdatedAt).toLocaleDateString() : '---'}</TableCell>
                 <TableCell>
                   <Select
                     defaultValue={item.status}
                     onValueChange={(val) => updateStatusMutation.mutate({ id: item.id, status: val })}
                   >
-                    <SelectTrigger className="h-8 w-[130px] text-xs font-bold border-none bg-secondary/50 focus:ring-0 focus:ring-offset-0">
+                    <SelectTrigger className="h-8 w-[150px] text-[10px] font-bold border-red-200 bg-red-50 text-red-700 uppercase focus:ring-0 focus:ring-offset-0 tracking-tighter shadow-sm">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="initiated">Initiated</SelectItem>
-                      <SelectItem value="contacted">Contacted</SelectItem>
-                      <SelectItem value="validated">Validated</SelectItem>
-                      <SelectItem value="recovered">Recovered</SelectItem>
-                      <SelectItem value="written_off">Written Off</SelectItem>
+                      <SelectItem value="RECOVERY_REQUIRED">RECOVERY REQ</SelectItem>
+                      <SelectItem value="CLEARED">Mark Recovered</SelectItem>
+                      <SelectItem value="BLOCKED">Move back to Blocked</SelectItem>
                     </SelectContent>
                   </Select>
                 </TableCell>
-                <TableCell className="text-xs text-muted-foreground">{calculateAging(item.initiatedDate)}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{item.statusUpdatedAt ? calculateAging(item.statusUpdatedAt) : 'N/A'}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-2">
                     <Sheet>

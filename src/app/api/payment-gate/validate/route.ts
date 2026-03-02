@@ -108,24 +108,49 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        // 3. Batch insert into the staging table!
-        const inserts = results.map(r => {
+        // 3. Upsert Vendors and Batch insert into invoices state machine
+        const vendorIds = Array.from(new Set(results.map(r => r.invoice.vendorId))).filter(Boolean);
+        if (vendorIds.length > 0) {
+            const vendorInserts = vendorIds.map(id => ({
+                id: id as string,
+                name: `Vendor ${id}`,
+                riskLevel: "low",
+            }));
+            await db.insert(require("@/lib/schema").vendors)
+                .values(vendorInserts)
+                .onConflictDoNothing({ target: require("@/lib/schema").vendors.id });
+        }
+
+        const invoiceInserts = results.map(r => {
             const parsedAmount = parseFloat(String(r.invoice.amount).replace(/,/g, '')) || 0;
             return {
                 invoiceNumber: r.invoice.invoiceNumber || 'UNKNOWN',
                 vendorId: r.invoice.vendorId || 'UNKNOWN_VENDOR',
                 amount: parsedAmount.toString(),
                 invoiceDate: r.invoice.invoiceDate ? new Date(r.invoice.invoiceDate) : new Date(),
-                companyCode: r.invoice.companyCode || null,
-                erpSource: "Payment Gate",
-                status: r.status,
-                duplicateMatchId: r.detection?.matchedInvoice?.id || null,
+                status: r.status === 'CLEAN' ? 'UPLOADED' : 'AUTO_FLAGGED',
+                isDuplicate: r.status !== 'CLEAN',
+                similarityScore: r.detection?.score || null,
+                signals: r.detection?.signals.filter(s => s.triggered).map(s => s.name) || [],
+                matchedInvoiceId: r.detection?.matchedInvoice?.id || null,
             };
         });
 
-        if (inserts.length > 0) {
-            await db.insert(paymentProposals).values(inserts);
+        let insertedInvoices: any[] = [];
+        if (invoiceInserts.length > 0) {
+            insertedInvoices = await db.insert(require("@/lib/schema").invoices).values(invoiceInserts).returning({
+                id: require("@/lib/schema").invoices.id,
+                invoiceNumber: require("@/lib/schema").invoices.invoiceNumber,
+            });
         }
+
+        // Map the new DB UUIDs back to the results
+        results.forEach(r => {
+            const inserted = insertedInvoices.find(i => i.invoiceNumber === r.invoice.invoiceNumber);
+            if (inserted) {
+                r.invoice.id = inserted.id; // Attach actual DB UUID
+            }
+        });
 
         // Summarize results
         const summary = {
