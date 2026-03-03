@@ -14,6 +14,7 @@ import {
 import { Download, Mail, Loader2, Send, History, AlertCircle } from "lucide-react";
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -63,6 +64,7 @@ export default function Recovery() {
   const [isExporting, setIsExporting] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState("excel");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [mounted, setMounted] = useState(false);
   const queryClient = useQueryClient();
 
@@ -74,13 +76,20 @@ export default function Recovery() {
   const { data: recoveryData = [], isLoading } = useQuery({
     queryKey: ["recovery-invoices"],
     queryFn: async () => {
-      const res = await fetch("/api/invoices?status=RECOVERY_REQUIRED");
+      const res = await fetch("/api/invoices?status=RECOVERY_REQUIRED&status=RECOVERED");
       if (!res.ok) throw new Error("Failed to fetch recovery items");
-      return res.json();
+      const json = await res.json();
+      return Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
     }
   });
 
-  const recoveryItems = (Array.isArray(recoveryData) ? recoveryData : []) as RecoveryItem[];
+  const allRecoveryItems = (Array.isArray(recoveryData) ? recoveryData : []) as RecoveryItem[];
+
+  const recoveryItems = allRecoveryItems.filter(item => {
+    if (statusFilter === "pending") return item.status === "RECOVERY_REQUIRED";
+    if (statusFilter === "recovered") return item.status === "RECOVERED";
+    return true; // "all"
+  });
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status, notes }: { id: string, status: string, notes?: string }) => {
@@ -194,9 +203,16 @@ export default function Recovery() {
     toast.success(`Recovery report exported successfully (${extension.toUpperCase()})`);
   };
 
-  const calculateAging = (dateString: string) => {
-    const days = Math.floor((new Date().getTime() - new Date(dateString).getTime()) / (1000 * 3600 * 24));
-    return `${days} days`;
+  const calculateAging = (dateString: string | null | undefined) => {
+    if (!dateString) return "N/A";
+    try {
+      const d = new Date(dateString);
+      if (isNaN(d.getTime())) return "N/A";
+      const days = Math.floor((new Date().getTime() - d.getTime()) / (1000 * 3600 * 24));
+      return `${days} days`;
+    } catch {
+      return "N/A";
+    }
   };
 
   return (
@@ -208,23 +224,51 @@ export default function Recovery() {
             Track and manage recovery of funds for duplicates detected after payment.
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={handleExport}
-          disabled={isExporting || recoveryItems.length === 0}
-          className="font-bold shadow-sm min-w-[160px]"
-        >
-          {isExporting ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Exporting...
-            </>
-          ) : (
-            <>
-              <Download className="mr-2 h-4 w-4" /> Export Report
-            </>
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex bg-muted p-1 rounded-lg">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setStatusFilter("all")}
+              className={cn("h-8 text-xs font-bold", statusFilter === "all" && "bg-background shadow-sm")}
+            >
+              All Cases
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setStatusFilter("pending")}
+              className={cn("h-8 text-xs font-bold text-amber-700", statusFilter === "pending" && "bg-amber-100 shadow-sm hover:bg-amber-200 hover:text-amber-800")}
+            >
+              Pending
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setStatusFilter("recovered")}
+              className={cn("h-8 text-xs font-bold text-emerald-700", statusFilter === "recovered" && "bg-emerald-100 shadow-sm hover:bg-emerald-200 hover:text-emerald-800")}
+            >
+              Recovered
+            </Button>
+          </div>
+          <Button
+            variant="outline"
+            onClick={handleExport}
+            disabled={isExporting || recoveryItems.length === 0}
+            className="font-bold shadow-sm min-w-[140px]"
+          >
+            {isExporting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Exporting
+              </>
+            ) : (
+              <>
+                <Download className="mr-2 h-4 w-4" /> Export
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-md border bg-card">
@@ -272,12 +316,17 @@ export default function Recovery() {
                     defaultValue={item.status}
                     onValueChange={(val) => updateStatusMutation.mutate({ id: item.id, status: val })}
                   >
-                    <SelectTrigger className="h-8 w-[150px] text-[10px] font-bold border-red-200 bg-red-50 text-red-700 uppercase focus:ring-0 focus:ring-offset-0 tracking-tighter shadow-sm">
+                    <SelectTrigger className={cn(
+                      "h-8 w-[150px] text-[10px] font-bold uppercase focus:ring-0 focus:ring-offset-0 tracking-tighter shadow-sm",
+                      item.status === "RECOVERED"
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-amber-200 bg-amber-50 text-amber-700"
+                    )}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="RECOVERY_REQUIRED">RECOVERY REQ</SelectItem>
-                      <SelectItem value="CLEARED">Mark Recovered</SelectItem>
+                      <SelectItem value="RECOVERY_REQUIRED">RECOVERY PENDING</SelectItem>
+                      <SelectItem value="RECOVERED">Mark Recovered</SelectItem>
                       <SelectItem value="BLOCKED">Move back to Blocked</SelectItem>
                     </SelectContent>
                   </Select>
@@ -353,7 +402,7 @@ export default function Recovery() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   );
 }
 

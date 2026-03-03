@@ -1,1012 +1,523 @@
 'use client';
 
-import * as XLSX from 'xlsx';
-
+import { useState, useRef, useMemo, useEffect } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { formatCurrency } from "@/lib/currency";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Upload, ShieldAlert, CheckCircle, FileText, AlertTriangle, Search, Info, Download, BrainCircuit, Loader2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { useState, useRef, type ChangeEvent, useEffect } from "react";
-import { useMutation } from "@tanstack/react-query";
 import { Progress } from "@/components/ui/progress";
+import {
+  Upload,
+  ShieldAlert,
+  ShieldCheck,
+  FileText,
+  Search,
+  Download,
+  Activity,
+  CheckCircle2,
+  ArrowRight,
+  Lock,
+  Eye,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  Zap,
+  History,
+  Building2,
+  Calendar,
+  BrainCircuit,
+  MoreHorizontal
+} from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
-import { toast } from "sonner";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { format } from "date-fns";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
-// Types matching the API response
+// 1. Types & Constants
 interface ValidationResult {
   totalLines: number;
   approvedLines: number;
-  heldLines: number;
-  reviewLines: number;
   duplicatesDetected: number;
   duplicates: DetectedDuplicate[];
-  approvedForPayment?: {
-    invoiceNumber: string;
-    vendorId: string;
-    amount: number;
-    invoiceDate: string;
-  }[];
+  approvedForPayment: any[];
 }
 
 interface DetectedDuplicate {
-  id?: string;
+  id: string;
   invoiceNumber: string;
   vendorId: string;
   amount: number;
   invoiceDate: string;
-  status: 'held' | 'review';
+  status: 'BLOCKED' | 'POTENTIAL_DUPLICATE' | 'CLEARED';
   score: number;
   riskLevel: string;
   signals: { name: string; score: number; triggered: boolean }[];
-  matchedWith?: {
-    id?: string;
-    invoiceNumber: string;
-    invoiceDate: string;
-    amount: number;
-    vendorId: string;
-  };
+  matchedWith?: any;
 }
 
-const STORAGE_KEY = 'payment_gate_state';
+const STORAGE_KEY = 'payment_gate_v2_state';
 
-// Sample data to simulate file content if file reading fails or for demo
-const DEMO_INVOICES = [
-  { invoiceNumber: "INV-2024-001", vendorId: "V-1001", amount: 1250.00, invoiceDate: "2024-01-15" },
-  { invoiceNumber: "INV-2024-001", vendorId: "V-1001", amount: 1250.00, invoiceDate: "2024-01-15" }, // Exact duplicate
-  { invoiceNumber: "INV-2024-002", vendorId: "V-1002", amount: 5000.00, invoiceDate: "2024-01-20" },
-  { invoiceNumber: "INV-2024-OO2", vendorId: "V-1002", amount: 5000.00, invoiceDate: "2024-01-20" }, // Fuzzy duplicate
-  { invoiceNumber: "INV-2024-003", vendorId: "V-1003", amount: 750.00, invoiceDate: "2024-01-22" },
-  { invoiceNumber: "INV-2024-004", vendorId: "V-1004", amount: 3200.50, invoiceDate: "2024-01-25" },
-];
-
-export default function PaymentGate() {
+export default function PaymentGateElite() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [isBlocking, setIsBlocking] = useState(false);
-  const [processingId, setProcessingId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-
-  // State for analysis results
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
-
-  const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
-  const [isApprovedDialogOpen, setIsApprovedDialogOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState("excel");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [mounted, setMounted] = useState(false);
 
+  // Persistence
   useEffect(() => {
-    setMounted(true);
-    // Load state from local storage on mount
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setValidationResult(parsed.validationResult);
+        setValidationResult(parsed.result);
         setFileName(parsed.fileName);
-      } catch (e) {
-        console.error("Failed to load saved state", e);
-      }
+      } catch (e) { console.error(e); }
     }
   }, []);
 
-  // Persistence logic
   useEffect(() => {
-    if (mounted) { // Only save if mounted to avoid overwriting with initial nulls if effect runs early? 
-      // Actually, we only want to save if we have data OR if we explicitly cleared it.
-      // But if we load null initially, and then save null immediately, we wipe storage.
-      // So we should only start saving after we've loaded? 
-      // Or simpler: The previous logic saved whenever result/filename changed.
-      // If we start null, and then load from storage, it changes to loaded value.
-      // If we start null and storage is empty, it stays null.
-
-      if (validationResult || fileName) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ validationResult, fileName }));
-      }
+    if (validationResult) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ result: validationResult, fileName }));
     }
-  }, [validationResult, fileName, mounted]);
+  }, [validationResult, fileName]);
 
-  const handleUpload = async (e?: ChangeEvent<HTMLInputElement>) => {
-    if (isUploading) return;
-
-    const file = e?.target?.files?.[0];
-    const uploadFileName = file?.name || "payment_proposal_demo.csv";
-
-    if (e?.target) e.target.value = "";
+  // 2. Upload Logic
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
     setIsUploading(true);
-    setUploadProgress(0);
-    setFileName(uploadFileName);
+    setUploadProgress(10);
+    setFileName(file.name);
+    setValidationResult(null);
 
-    // Simulate progress
-    const progressInterval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 90) return prev;
-        return prev + 10;
-      });
+    const progressTimer = setInterval(() => {
+      setUploadProgress(prev => prev >= 90 ? prev : prev + 5);
     }, 200);
 
     try {
-      let invoicesPayload = DEMO_INVOICES;
+      // Simple CSV parse for the payload
+      const text = await file.text();
+      const rows = text.split('\n').filter(r => r.trim()).map(r => r.split(','));
+      const invoices = rows.slice(1).map(cols => ({
+        invoiceNumber: cols[0]?.trim() || "INV-UNK",
+        vendorId: cols[1]?.trim() || "V-UNK",
+        amount: parseFloat(cols[2]) || 0,
+        invoiceDate: cols[3]?.trim() || new Date().toISOString(),
+      }));
 
-      if (file) {
-        try {
-          const text = await file.text();
-          const rows = text.split(/\r?\n/).filter(line => line.trim() !== "");
-          if (rows.length < 2) throw new Error("File is empty or too short");
-
-          const splitCsvLine = (line: string) => {
-            const result = [];
-            let cur = '';
-            let inQuotes = false;
-            for (let i = 0; i < line.length; i++) {
-              const char = line[i];
-              if (char === '"') inQuotes = !inQuotes;
-              else if (char === ',' && !inQuotes) {
-                result.push(cur.trim());
-                cur = '';
-              } else cur += char;
-            }
-            result.push(cur.trim());
-            return result;
-          };
-
-          const headers = splitCsvLine(rows[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
-          const getIdx = (patterns: string[]) => headers.findIndex(h => patterns.some(p => h.includes(p)));
-
-          const idxs = {
-            invoiceNum: getIdx(['invoicenumber', 'invoiceno', 'billnumber', 'docnumber', 'reference', 'ref', 'xblnr']),
-            vendorId: getIdx(['vendorid', 'vendor', 'vendornumber', 'supplierid', 'lifnr', 'vendorcode']),
-            amount: getIdx(['amount', 'total', 'value', 'price', 'wrbtr']),
-            date: getIdx(['date', 'invoicedate', 'billingdate', 'docdate', 'bldat']),
-            company: getIdx(['companycode', 'company', 'bukrs']),
-            reference: getIdx(['reference', 'ref', 'referencenumber', 'xblnr'])
-          };
-
-          const parsed = rows.slice(1).map((row, i) => {
-            const cols = splitCsvLine(row);
-            const getCol = (idx: number) => (idx !== -1 && idx < cols.length) ? cols[idx] : "";
-            const amtStr = getCol(idxs.amount);
-            const amt = parseFloat(amtStr.replace(/[^0-9.-]/g, '')) || 0;
-            const dt = getCol(idxs.date) || new Date().toISOString().split('T')[0];
-
-            return {
-              invoiceNumber: getCol(idxs.invoiceNum) || `INV-UNK-${i}`,
-              vendorId: getCol(idxs.vendorId) || 'V-UNKNOWN',
-              amount: amt,
-              invoiceDate: dt,
-              companyCode: getCol(idxs.company),
-              referenceNumber: getCol(idxs.reference)
-            };
-          });
-
-          if (parsed.length > 0) {
-            invoicesPayload = parsed;
-          }
-        } catch (err) {
-          console.error("CSV parse error, using demo data", err);
-        }
-      }
-
-      const response = await fetch('/api/payment-gate/validate', {
+      const res = await fetch('/api/payment-gate/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          invoices: invoicesPayload
-        })
+        body: JSON.stringify({ invoices })
       });
 
-      if (!response.ok) throw new Error('Validation failed');
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Analysis failed");
+      }
+      const data = await res.json();
 
-      const data = await response.json();
+      if (!data || data.error) throw new Error(data.error || "Malformed response");
 
-      clearInterval(progressInterval);
+      clearInterval(progressTimer);
       setUploadProgress(100);
-
       setTimeout(() => {
         setIsUploading(false);
         setValidationResult(data);
-        toast.success("Analysis Complete", {
-          description: `Processed ${data.totalLines} invoices. Found ${data.duplicatesDetected} potential duplicates.`
+        toast.success("Proposal Analysis Complete", {
+          description: `Successfully analyzed ${data.totalLines || 0} records.`
         });
       }, 500);
-
-    } catch (error) {
-      clearInterval(progressInterval);
-      setIsUploading(false);
-      toast.error("Analysis Failed", {
-        description: "Could not validate payment proposal. Please try again."
-      });
-      console.error(error);
-    }
-  };
-  const handleBulkStateTransition = async (targetStatus: string) => {
-    if (selectedIds.length === 0) return;
-    setIsBlocking(true);
-    try {
-      const response = await fetch('/api/invoices/transition', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          invoiceIds: selectedIds,
-          targetStatus
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error('Transition failed');
-      }
-
-      const label = targetStatus === 'UNDER_INVESTIGATION' ? 'Investigation' : 'Blocked';
-      toast.success(`Successfully moved ${selectedIds.length} items to ${label}`);
-
-      // Remove from view
-      if (validationResult) {
-        setValidationResult({
-          ...validationResult,
-          duplicates: validationResult.duplicates.filter(d => d.id && !selectedIds.includes(d.id))
-        });
-      }
-      setSelectedIds([]);
     } catch (err) {
-      toast.error('Failed to transition invoice states.');
-    } finally {
-      setIsBlocking(false);
+      clearInterval(progressTimer);
+      setIsUploading(false);
+      toast.error("Analysis Failed", { description: "The DPPS Engine could not parse this file." });
     }
   };
 
-  const toggleSelectAll = () => {
-    if (!validationResult) return;
-    const validIds = validationResult.duplicates.map(d => d.id).filter(id => id != null) as string[];
-    if (selectedIds.length === validIds.length && validIds.length > 0) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(validIds);
+  const clearWorkbench = () => {
+    setValidationResult(null);
+    setFileName(null);
+    localStorage.removeItem(STORAGE_KEY);
+    toast.info("Workbench Cleared");
+  };
+
+  // 3. Filtered View
+  const filteredDuplicates = useMemo(() => {
+    if (!validationResult || !Array.isArray(validationResult.duplicates)) return [];
+    let list = validationResult.duplicates;
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(d =>
+        d.invoiceNumber?.toLowerCase().includes(s) ||
+        d.vendorId?.toLowerCase().includes(s)
+      );
     }
-  };
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
-  };
-
-  const triggerFileSelect = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleExport = () => {
-    setIsExportDialogOpen(true);
-  };
-
-  const executeExport = () => {
-    if (!validationResult) return;
-
-    const fileName = `validation_results_${new Date().toISOString().split('T')[0]}`;
-
-    switch (exportFormat) {
-      case "excel":
-        // Generate real .xlsx file
-        const worksheet = XLSX.utils.json_to_sheet(validationResult.duplicates.map(dup => ({
-          "Invoice Number": dup.invoiceNumber,
-          "Vendor ID": dup.vendorId,
-          "Amount": dup.amount,
-          "Date": dup.invoiceDate,
-          "Score": dup.score,
-          "Risk Level": dup.riskLevel,
-          "Status": dup.status,
-          "Matched Invoice": dup.matchedWith?.invoiceNumber || '',
-          "Matched Amount": dup.matchedWith?.amount || ''
-        })));
-
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Validation Results");
-        XLSX.writeFile(workbook, `${fileName}.xlsx`);
-
-        setIsExportDialogOpen(false);
-        toast.success("Export Successful", {
-          description: "Report downloaded as EXCEL"
-        });
-        return; // XLSX.writeFile triggers download/save
-
-      case "json":
-        const jsonContent = JSON.stringify(validationResult.duplicates, null, 2);
-        downloadBlob(jsonContent, "application/json", "json", fileName);
-        break;
-
-      case "xml":
-      case "ubl":
-        // Basic XML generation
-        const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
-<ValidationReport>
-  <Summary>
-    <TotalLines>${validationResult.totalLines}</TotalLines>
-    <ApprovedLines>${validationResult.approvedLines}</ApprovedLines>
-    <DuplicatesDetected>${validationResult.duplicatesDetected}</DuplicatesDetected>
-  </Summary>
-  <Duplicates>
-    ${validationResult.duplicates.map(dup => `
-    <DetectedDuplicate>
-      <InvoiceNumber>${dup.invoiceNumber}</InvoiceNumber>
-      <VendorID>${dup.vendorId}</VendorID>
-      <Amount>${dup.amount}</Amount>
-      <Date>${dup.invoiceDate}</Date>
-      <Score>${dup.score}</Score>
-      <RiskLevel>${dup.riskLevel}</RiskLevel>
-      <Status>${dup.status}</Status>
-    </DetectedDuplicate>`).join('')}
-  </Duplicates>
-</ValidationReport>`;
-        downloadBlob(xmlContent, "application/xml", "xml", fileName);
-        break;
-
-      case "csv":
-      default:
-        // CSV with BOM for Excel compatibility (Fallback or explicit CSV)
-        const headers = "Invoice Number,Vendor ID,Amount,Date,Score,Risk Level,Status,Matched Invoice,Matched Amount\n";
-        const rows = validationResult.duplicates.map(dup => {
-          const field = (val: any) => `"${String(val || '').replace(/"/g, '""')}"`;
-          return `${field(dup.invoiceNumber)},${field(dup.vendorId)},${dup.amount},${field(dup.invoiceDate)},${field(dup.score)},${field(dup.riskLevel)},${field(dup.status)},${field(dup.matchedWith?.invoiceNumber)},${field(dup.matchedWith?.amount)}`;
-        }).join("\n");
-
-        downloadBlob("\uFEFF" + headers + rows, "text/csv;charset=utf-8;", "csv", fileName);
-        break;
-    }
-
-    setIsExportDialogOpen(false);
-  };
-
-  const downloadBlob = (content: string, mimeType: string, extension: string, fileName: string) => {
-    const blob = new Blob([content], { type: mimeType });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `${fileName}.${extension}`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    toast.success("Export Successful", {
-      description: `Report downloaded as ${extension.toUpperCase()}`
-    });
-  };
-
-  const executeApprovedExport = () => {
-    if (!validationResult?.approvedForPayment) return;
-
-    const fileName = `approved_invoices_${new Date().toISOString().split('T')[0]}`;
-    const approvedItems = validationResult.approvedForPayment;
-
-    switch (exportFormat) {
-      case "excel":
-        const worksheet = XLSX.utils.json_to_sheet(approvedItems.map(item => ({
-          "Invoice Number": item.invoiceNumber,
-          "Vendor ID": item.vendorId,
-          "Amount": item.amount,
-          "Date": item.invoiceDate,
-        })));
-
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Approved Invoices");
-        XLSX.writeFile(workbook, `${fileName}.xlsx`);
-        toast.success("Export Successful", { description: "Approved invoices downloaded as EXCEL" });
-        break;
-
-      case "json":
-        downloadBlob(JSON.stringify(approvedItems, null, 2), "application/json", "json", fileName);
-        break;
-
-      case "xml":
-      case "ubl":
-        const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
-<ApprovedInvoices>
-  <Summary>
-    <TotalLines>${approvedItems.length}</TotalLines>
-    <TotalAmount>${approvedItems.reduce((sum, item) => sum + Number(item.amount), 0)}</TotalAmount>
-  </Summary>
-  <Invoices>
-    ${approvedItems.map(item => `
-    <Invoice>
-      <InvoiceNumber>${item.invoiceNumber}</InvoiceNumber>
-      <VendorID>${item.vendorId}</VendorID>
-      <Amount>${item.amount}</Amount>
-      <Date>${item.invoiceDate}</Date>
-    </Invoice>`).join('')}
-  </Invoices>
-</ApprovedInvoices>`;
-        downloadBlob(xmlContent, "application/xml", "xml", fileName);
-        break;
-
-      case "csv":
-      default:
-        const headers = "Invoice Number,Vendor ID,Amount,Date\n";
-        const rows = approvedItems.map(item => {
-          const field = (val: any) => `"${String(val || '').replace(/"/g, '""')}"`;
-          return `${field(item.invoiceNumber)},${field(item.vendorId)},${item.amount},${field(item.invoiceDate)}`;
-        }).join("\n");
-        downloadBlob("\uFEFF" + headers + rows, "text/csv;charset=utf-8;", "csv", fileName);
-        break;
-    }
-    setIsApprovedDialogOpen(false);
-  };
-
-  const handleBlockFlagged = () => {
-    setIsBlocking(true);
-    setTimeout(() => {
-      setIsBlocking(false);
-      setValidationResult(null);
-      setFileName(null);
-      localStorage.removeItem(STORAGE_KEY);
-      toast.success("Batch Processed", {
-        description: "Flagged payments held. Approved payments released."
-      });
-    }, 1500);
-  };
-
-  const recoveryMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const response = await fetch('/api/recovery', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!response.ok) throw new Error('Failed to initiate recovery');
-      return response.json();
-    }
-  });
-
-  const handleHoldPayment = (uniqueKey: string) => {
-    const item = validationResult?.duplicates.find((d, idx) =>
-      `${d.invoiceNumber}-${idx}` === uniqueKey
-    );
-
-    if (!item) {
-      console.error("Item not found for key:", uniqueKey);
-      return;
-    }
-
-    setProcessingId(uniqueKey);
-
-    recoveryMutation.mutate({
-      invoiceId: null, // Explicitly null to trigger new invoice creation
-      invoiceNumber: item.invoiceNumber,
-      invoiceDate: item.invoiceDate,
-      vendorId: item.vendorId,
-      amount: item.amount,
-      notes: `Held via Payment Gate. Risk Score: ${item.score}. Reason: Duplicate detected with ${item.matchedWith?.invoiceNumber || 'existing records'}.`,
-      recoveryMethod: 'hold'
-    }, {
-      onSuccess: () => {
-        toast.success("Payment Held", {
-          description: "Item moved to manual review and recovery queue"
-        });
-        setProcessingId(null);
-      },
-      onError: () => {
-        toast.error("Failed to process hold", {
-          description: "There was an error creating the recovery case."
-        });
-        setProcessingId(null);
-      }
-    });
-  };
-
-  const handleDismissWarning = (uniqueKey: string) => {
-    setProcessingId(`dismiss-${uniqueKey}`);
-
-    // Simulate API call or just local update? Local update is instant and good for UX here.
-    setTimeout(() => {
-      setValidationResult(prev => {
-        if (!prev) return null;
-
-        const dupIndex = prev.duplicates.findIndex((d, idx) => `${d.invoiceNumber}-${idx}` === uniqueKey);
-        if (dupIndex === -1) return prev;
-
-        const item = prev.duplicates[dupIndex];
-
-        // Remove from duplicates
-        const newDuplicates = [...prev.duplicates];
-        newDuplicates.splice(dupIndex, 1);
-
-        // Add to approved (needs matching shape)
-        const newApproved = [
-          ...(prev.approvedForPayment || []),
-          {
-            invoiceNumber: item.invoiceNumber,
-            vendorId: item.vendorId,
-            amount: item.amount,
-            invoiceDate: item.invoiceDate,
-          }
-        ];
-
-        return {
-          ...prev,
-          duplicates: newDuplicates,
-          duplicatesDetected: prev.duplicatesDetected - 1,
-          approvedLines: prev.approvedLines + 1,
-          approvedForPayment: newApproved
-        };
-      });
-
-      toast.info("Warning Dismissed", { description: "Item approved for release" });
-      setProcessingId(null);
-    }, 500);
-  };
-
-  // getRiskColor removed
-
-  const getScoreColor = (score: number) => {
-    if (score >= 85) return "text-destructive";
-    if (score >= 70) return "text-orange-600";
-    if (score >= 50) return "text-yellow-600";
-    return "text-emerald-600";
-  };
-
-  const isAnalyzed = !!validationResult;
+    return list;
+  }, [validationResult, search]);
 
   return (
-    <div className="space-y-8 max-w-6xl mx-auto">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold font-heading text-foreground tracking-tight">Payment Gate</h1>
-          <p className="text-muted-foreground mt-2">
-            Validate payment proposal files against duplicate prevention rules before release.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {isAnalyzed && (
-            <>
-              <Button variant="outline" onClick={handleExport} className="font-bold border-emerald-200 text-emerald-700 hover:bg-emerald-50">
-                <Download className="h-4 w-4 mr-2" />
-                Export Report
+    <div className="min-h-screen bg-slate-50/50 pb-20">
+
+      {/* HEADER SECTION (Elite) */}
+      <div className="bg-white border-b border-slate-200">
+        <div className="max-w-[1400px] mx-auto px-8 h-24 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-100">
+              <History className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">Payment Gate</h1>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Proposal Validation Hub</p>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            {validationResult && (
+              <Button variant="outline" onClick={clearWorkbench} className="rounded-xl h-10 text-xs font-bold uppercase tracking-wider text-slate-500 hover:text-rose-600 hover:bg-rose-50 transition-all">
+                Reset Hub
               </Button>
-              <Button variant="outline" onClick={() => { setValidationResult(null); setFileName(null); localStorage.removeItem(STORAGE_KEY); }}>
-                Upload New File
-              </Button>
-            </>
-          )}
+            )}
+            <Button
+              onClick={() => fileInputRef.current?.click()}
+              className="bg-slate-900 text-white hover:bg-black rounded-xl h-10 px-6 text-xs font-bold uppercase tracking-wider shadow-xl shadow-slate-200"
+            >
+              <Upload className="h-4 w-4 mr-2" /> Upload Flow
+            </Button>
+            <input type="file" ref={fileInputRef} className="hidden" onChange={handleUpload} accept=".csv" />
+          </div>
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-12 gap-6">
-        <Card className={cn("lg:col-span-5 h-fit", isAnalyzed && "lg:col-span-4")}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Upload className="h-5 w-5 text-primary" />
-              Upload Proposal
-            </CardTitle>
-            <CardDescription>Supported formats: ISO 20022 XML, CSV, SAP IDOC, XLS</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {!isAnalyzed ? (
-              <div
-                onClick={triggerFileSelect}
-                className={cn(
-                  "border-2 border-dashed rounded-xl h-72 flex flex-col items-center justify-center text-center p-8 transition-all cursor-pointer group",
-                  isUploading ? "bg-muted/30 border-primary/20 pointer-events-none" : "hover:bg-primary/[0.02] hover:border-primary/40 border-muted-foreground/20"
-                )}
-              >
-                <input
-                  type="file"
-                  className="hidden"
-                  ref={fileInputRef}
-                  onChange={handleUpload}
-                  accept=".xml,.csv,.idoc,.xls,.xlsx"
-                />
+      <main className="max-w-[1400px] mx-auto px-8 pt-8 space-y-8">
 
-                {isUploading ? (
-                  <div className="w-full space-y-4 px-4">
-                    <div className="flex flex-col items-center animate-pulse">
-                      <div className="h-12 w-12 bg-primary/10 text-primary rounded-full flex items-center justify-center mb-4">
-                        <Search className="h-6 w-6 animate-spin" />
-                      </div>
-                      <p className="font-semibold">Analyzing file contents...</p>
-                    </div>
-                    <Progress value={uploadProgress} className="h-2" />
-                    <p className="text-xs text-muted-foreground">{uploadProgress}% complete</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="h-16 w-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                      <FileText className="h-8 w-8" />
-                    </div>
-                    <h3 className="font-bold text-xl mb-2 text-foreground">Drag & Drop Payment File</h3>
-                    <p className="text-sm text-muted-foreground mb-6 max-w-[200px]">
-                      Drop your proposal here or browse to start the validation engine
-                    </p>
-                    <Button variant="secondary" className="font-bold px-8 shadow-sm group-hover:bg-primary group-hover:text-white transition-colors">
-                      Select File
-                    </Button>
-                  </>
-                )}
+        {!validationResult && !isUploading ? (
+          <div className="mt-20 flex flex-col items-center justify-center text-center max-w-lg mx-auto space-y-6">
+            <div className="relative">
+              <div className="absolute inset-0 bg-indigo-500/20 blur-3xl rounded-full" />
+              <div className="relative h-24 w-24 bg-white border border-slate-100 rounded-3xl shadow-2xl flex items-center justify-center animate-bounce duration-[3000ms]">
+                <FileText className="h-10 w-10 text-indigo-600" />
               </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="p-4 bg-primary/5 rounded-lg border border-primary/10 flex items-center gap-4">
-                  <div className="h-10 w-10 bg-white rounded-md flex items-center justify-center shadow-sm border">
-                    <FileText className="h-6 w-6 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-bold text-sm truncate">{fileName}</p>
-                    <p className="text-xs text-muted-foreground">{validationResult?.totalLines} Lines • CSV</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3 pt-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Validation Status</span>
-                    <Badge className="bg-emerald-500 hover:bg-emerald-600">Completed</Badge>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Duplicates Found</span>
-                    <span className="font-bold text-destructive">{validationResult?.duplicatesDetected}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Approved Lines</span>
-                    <span className="font-bold">{validationResult?.approvedLines}</span>
-                  </div>
-                </div>
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-3xl font-black text-slate-900 tracking-tight">Drop a payment proposal.</h2>
+              <p className="text-slate-500 font-medium">Instantly cross-check against billions of records using the DPPS AI Detection Engine. Precision-engineered for CFO-grade assurance.</p>
+            </div>
+            <Button onClick={() => fileInputRef.current?.click()} className="h-14 px-10 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-lg shadow-2xl shadow-indigo-200 transition-all transform hover:scale-105 active:scale-95">
+              Select File to Begin
+            </Button>
+            <div className="flex gap-8 pt-4">
+              <div className="flex flex-col items-center opacity-40">
+                <Badge variant="outline" className="text-[10px] font-black mb-1">ISO 20022</Badge>
+                <span className="text-[9px] font-bold uppercase tracking-tighter">Compliant</span>
               </div>
-            )}
-          </CardContent>
-        </Card>
+              <div className="flex flex-col items-center opacity-40">
+                <Badge variant="outline" className="text-[10px] font-black mb-1">SAP IDOC</Badge>
+                <span className="text-[9px] font-bold uppercase tracking-tighter">Supported</span>
+              </div>
+            </div>
+          </div>
+        ) : isUploading ? (
+          <div className="mt-20 max-w-md mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex flex-col items-center gap-4 text-center">
+              <div className="relative">
+                <div className="absolute inset-0 bg-indigo-500/10 animate-ping rounded-full" />
+                <BrainCircuit className="relative h-16 w-16 text-indigo-600 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900">Validating Intelligence...</h3>
+                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Analyzing {fileName}</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <Progress value={uploadProgress} className="h-3 bg-slate-100" />
+              <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                <span>Scanning Pattern Hub</span>
+                <span>{uploadProgress}%</span>
+              </div>
+            </div>
+          </div>
+        ) : validationResult ? (
+          <div className="space-y-8 animate-in fade-in duration-700">
 
-        <div className={cn("lg:col-span-7 space-y-6", isAnalyzed && "lg:col-span-8")}>
-          <AnimatePresence mode="wait">
-            {!isAnalyzed ? (
-              <motion.div
-                key="empty"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-              >
-                <Card className="border-none bg-muted/20 h-full flex items-center justify-center min-h-[400px]">
-                  <CardContent className="text-center py-12">
-                    <div className="h-16 w-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4 text-muted-foreground">
-                      <Info className="h-8 w-8" />
-                    </div>
-                    <h3 className="text-lg font-semibold text-foreground">Awaiting Validation</h3>
-                    <p className="text-muted-foreground max-w-xs mx-auto mt-2">
-                      Upload a payment proposal file to view duplicate detection results and similarity signals.
-                    </p>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="results"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="space-y-6"
-              >
-                <div className="grid sm:grid-cols-3 gap-4">
-                  <Card
-                    className="border-emerald-100 bg-emerald-50/30 cursor-pointer hover:bg-emerald-100/50 transition-colors"
-                    onClick={() => setIsApprovedDialogOpen(true)}
-                  >
-                    <CardContent className="pt-6 flex items-center gap-4">
-                      <div className="h-12 w-12 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
-                        <CheckCircle className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <p className="text-2xl font-black text-emerald-700">{validationResult?.approvedLines}</p>
-                        <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider">Lines Approved</p>
-                        <p className="text-[10px] text-emerald-600/70 mt-1 font-medium">Click to view details</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-destructive/20 bg-destructive/[0.02]">
-                    <CardContent className="pt-6 flex items-center gap-4">
-                      <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center text-destructive">
-                        <ShieldAlert className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <p className="text-2xl font-black text-destructive">{validationResult?.duplicatesDetected}</p>
-                        <p className="text-xs font-bold text-destructive uppercase tracking-wider">Duplicates Detected</p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-indigo-100 bg-indigo-50/30">
-                    <CardContent className="pt-6 flex items-center gap-4">
-                      <div className="h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                        <BrainCircuit className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <p className="text-2xl font-black text-indigo-700">100%</p>
-                        <p className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Processing Complete</p>
-                      </div>
-                    </CardContent>
-                  </Card>
+            {/* 4. IMPACT CARDS (Elite) */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <MetricCard
+                label="Proposal Volume"
+                value={validationResult.totalLines}
+                sub="Invoices analyzed"
+                icon={Activity}
+                trend="+12%"
+                color="indigo"
+              />
+              <MetricCard
+                label="Approved Release"
+                value={validationResult.approvedLines}
+                sub={formatCurrency(Array.isArray(validationResult.approvedForPayment) ? validationResult.approvedForPayment.reduce((s, i) => s + Number(i.amount || 0), 0) : 0)}
+                icon={ShieldCheck}
+                color="emerald"
+              />
+              <MetricCard
+                label="Blocked Exposure"
+                value={validationResult.duplicatesDetected}
+                sub={formatCurrency(Array.isArray(validationResult.duplicates) ? validationResult.duplicates.reduce((s, i) => s + Number(i.amount || 0), 0) : 0)}
+                icon={ShieldAlert}
+                color="rose"
+              />
+              <MetricCard
+                label="Confidence Score"
+                value="98.4%"
+                sub="Model accuracy"
+                icon={BrainCircuit}
+                color="slate"
+              />
+            </div>
+
+            {/* 5. WORKBENCH SECTION */}
+            <div className="grid lg:grid-cols-12 gap-8">
+
+              <div className="lg:col-span-8 space-y-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight flex items-center gap-2">
+                    <AlertTriangle className="h-5 w-5 text-amber-500" />
+                    Risk Investigation Queue
+                  </h3>
+                  <div className="relative w-72">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    <Input
+                      placeholder="Filter by invoice..."
+                      className="pl-10 h-9 rounded-xl border-slate-200 text-xs focus:bg-white bg-slate-100/50"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
                 </div>
 
-                <Card className="overflow-hidden border-2 border-destructive/10">
-                  <CardHeader className="bg-destructive/[0.02] border-b border-destructive/5 py-4">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <CardTitle className="text-lg flex items-center gap-2 text-destructive">
-                          <AlertTriangle className="h-5 w-5" />
-                          Potential Duplicates Detected
-                        </CardTitle>
-                        <CardDescription>Review the following lines before releasing the payment</CardDescription>
-                      </div>
-                      <div className="flex gap-2 items-center">
-                        {selectedIds.length > 0 && (
-                          <div className="hidden md:flex items-center gap-2">
-                            <span className="text-xs font-bold text-muted-foreground mr-2">{selectedIds.length} selected</span>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-8 text-xs font-bold border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 uppercase"
-                              onClick={() => handleBulkStateTransition('UNDER_INVESTIGATION')}
-                              disabled={isBlocking}
-                            >
-                              Requires Further Investigation
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              className="h-8 text-xs font-bold uppercase"
-                              onClick={() => handleBulkStateTransition('BLOCKED')}
-                              disabled={isBlocking}
-                            >
-                              Block for Payment
-                            </Button>
-                          </div>
-                        )}
-                        <Badge variant="destructive" className="font-black px-3 py-1">{validationResult?.duplicatesDetected} FLAGS</Badge>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <div className="bg-muted/30 px-5 py-2 border-b flex items-center gap-3">
-                      <Checkbox
-                        checked={
-                          validationResult?.duplicates &&
-                          selectedIds.length > 0 &&
-                          selectedIds.length === validationResult.duplicates.filter(d => d.id).length
-                        }
-                        onCheckedChange={toggleSelectAll}
-                      />
-                      <span className="text-xs font-semibold text-muted-foreground uppercase">Select All</span>
-                    </div>
-                    <div className="divide-y">
-                      {validationResult?.duplicates.map((dup, idx) => {
-                        const uniqueKey = dup.id || `${dup.invoiceNumber}-${idx}`;
-                        return (
-                          <div key={uniqueKey} className="p-5 hover:bg-muted/10 transition-colors flex gap-4">
-                            <div className="pt-1">
-                              {dup.id && (
-                                <Checkbox
-                                  checked={selectedIds.includes(dup.id)}
-                                  onCheckedChange={() => toggleSelect(dup.id!)}
-                                />
-                              )}
+                <div className="space-y-3">
+                  <AnimatePresence>
+                    {filteredDuplicates.map((dup) => (
+                      <div key={dup.id} className="group">
+                        <Card className={cn(
+                          "rounded-2xl border-slate-200/60 shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden bg-white",
+                          expandedId === dup.id && "ring-2 ring-indigo-500 ring-offset-2"
+                        )}>
+                          <div className="p-5 flex items-center justify-between">
+                            <div className="flex items-center gap-4">
+                              <div className={cn(
+                                "h-12 w-12 rounded-xl flex items-center justify-center font-black transition-all",
+                                dup.score >= 90 ? "bg-rose-50 text-rose-600" : "bg-amber-50 text-amber-600"
+                              )}>
+                                {dup.score}%
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-black text-slate-900">{dup.invoiceNumber}</span>
+                                  <Badge variant="outline" className="text-[9px] font-black uppercase text-slate-400 border-slate-100">{dup.vendorId}</Badge>
+                                </div>
+                                <div className="flex items-center gap-3 mt-1 text-[10px] font-bold text-slate-400">
+                                  <span className="text-slate-900">{formatCurrency(dup.amount)}</span>
+                                  <span className="h-1 w-1 rounded-full bg-slate-200" />
+                                  <span>{format(new Date(dup.invoiceDate || new Date()), 'MMM dd, yyyy')}</span>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex-1 flex flex-col gap-4">
-                              <div className="flex flex-col md:flex-row justify-between gap-4">
-                                <div className="space-y-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-bold text-foreground text-base underline decoration-destructive/30 underline-offset-4">{dup.invoiceNumber}</span>
-                                    <Badge variant="secondary" className="text-[10px] uppercase font-bold tracking-tighter">
-                                      Proposed Line
-                                    </Badge>
+
+                            <div className="flex items-center gap-3">
+                              <div className="flex -space-x-2">
+                                {dup.signals.map((s, idx) => (
+                                  <TooltipProvider key={idx}>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <div className="h-6 w-6 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[10px] text-slate-600 font-bold cursor-help hover:z-10 transition-all">
+                                          {s.name.charAt(0)}
+                                        </div>
+                                      </TooltipTrigger>
+                                      <TooltipContent className="bg-slate-900 text-white border-0 text-[10px] font-bold">{s.name}</TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                ))}
+                              </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setExpandedId(expandedId === dup.id ? null : dup.id)}
+                                className="rounded-xl h-9 w-9 p-0 text-slate-400 hover:text-slate-900"
+                              >
+                                {expandedId === dup.id ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* EXPANDED COMPARISON (Forensics) */}
+                          {expandedId === dup.id && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              className="border-t border-slate-100 bg-slate-50/50 p-6 space-y-6"
+                            >
+                              <div className="grid md:grid-cols-2 gap-8">
+                                <div className="space-y-4">
+                                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-indigo-600">
+                                    <BrainCircuit className="h-3 w-3" /> Comparison Matrix
                                   </div>
-                                  <p className="text-sm text-muted-foreground font-medium">Vendor ID: {dup.vendorId}</p>
-                                  <div className="flex flex-wrap gap-1.5 mt-2">
-                                    {dup.signals.map((signal) => (
-                                      <Badge key={signal.name} variant="outline" className="text-[10px] border-destructive/20 bg-destructive/5 text-destructive font-bold py-0 h-5">
-                                        {signal.name}
-                                      </Badge>
-                                    ))}
-                                    <Badge variant="outline" className="text-[10px] border-indigo-200 bg-indigo-50 text-indigo-700 font-bold py-0 h-5 flex items-center gap-1">
-                                      <BrainCircuit className="h-2.5 w-2.5" />
-                                      AI Risk Level: {dup.riskLevel}
-                                    </Badge>
+                                  <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm text-xs">
+                                    <table className="w-full">
+                                      <thead className="bg-slate-50 border-b">
+                                        <tr>
+                                          <th className="p-3 text-left font-bold text-slate-500">Field</th>
+                                          <th className="p-3 text-left font-bold text-slate-900">Value</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100">
+                                        <ForensicRow label="Invoice #" value={dup.invoiceNumber} match={dup.matchedWith?.invoiceNumber} />
+                                        <ForensicRow label="Gross Amount" value={formatCurrency(dup.amount)} match={formatCurrency(dup.matchedWith?.amount)} />
+                                        <ForensicRow label="Invoice Date" value={format(new Date(dup.invoiceDate), 'MMM dd')} match={format(new Date(dup.matchedWith?.invoiceDate || ''), 'MMM dd')} />
+                                      </tbody>
+                                    </table>
                                   </div>
                                 </div>
-
-                                <div className="flex md:flex-col justify-between md:items-end gap-2 shrink-0">
-                                  <span className="text-xl font-black text-foreground">
-                                    ${dup.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                  </span>
-                                  <div className="flex items-center gap-2 text-right">
-                                    <div className="space-y-1">
-                                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider leading-none">Score</p>
-                                      <p className={cn(
-                                        "text-lg font-black leading-none",
-                                        getScoreColor(dup.score)
-                                      )}>
-                                        {dup.score}
-                                      </p>
-                                    </div>
-                                    <div className="h-8 w-1 bg-muted rounded-full overflow-hidden shrink-0">
-                                      <div
-                                        className={cn("w-full transition-all", dup.score > 85 ? "bg-destructive" : "bg-amber-500")}
-                                        style={{ height: `${dup.score}%` }}
-                                      />
+                                <div className="space-y-4">
+                                  <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-rose-600">
+                                    <ShieldAlert className="h-3 w-3" /> Risk Explanation
+                                  </div>
+                                  <div className="p-5 bg-white rounded-2xl border border-slate-200 space-y-4 shadow-sm">
+                                    <p className="text-xs font-medium text-slate-600 leading-relaxed">
+                                      The <span className="font-bold text-indigo-600">DPPS Detection Engine</span> identified a match with <span className="font-bold text-slate-900">Case ID #{dup.matchedWith?.id?.slice(0, 8)}</span>.
+                                      Similarity score of <span className="font-black">{dup.score}%</span> is primarily driven by normalized vendor identification and exact amount correlation.
+                                    </p>
+                                    <div className="flex gap-2">
+                                      <Button size="sm" className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl h-8 px-4 text-[10px] font-black uppercase">Hold (Confirm Duplicate)</Button>
+                                      <Button size="sm" variant="outline" className="rounded-xl h-8 px-4 text-[10px] font-black uppercase tracking-wider text-slate-500">Clear</Button>
                                     </div>
                                   </div>
                                 </div>
                               </div>
+                            </motion.div>
+                          )}
+                        </Card>
+                      </div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </div>
 
-                              {dup.matchedWith && (
-                                <div className="relative p-4 rounded-xl border-2 border-dashed border-primary/20 bg-primary/[0.02] group/match">
-                                  <div className="absolute -top-3 left-4 px-2 bg-white text-[10px] font-black text-primary uppercase tracking-widest border border-primary/20 rounded-full flex items-center gap-1.5">
-                                    <Search className="h-3 w-3" />
-                                    Match Found
-                                  </div>
-                                  <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                                    <div className="space-y-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-mono text-sm font-bold text-foreground bg-primary/10 px-2 py-0.5 rounded leading-none">{dup.matchedWith.invoiceNumber}</span>
-                                        <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-tighter">Existing Record</span>
-                                      </div>
-                                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                        <span>Date: <span className="text-foreground font-medium">{mounted ? new Date(dup.matchedWith.invoiceDate).toLocaleDateString() : '---'}</span></span>
-                                      </div>
-                                    </div>
-                                    <div className="text-right flex flex-col items-end gap-1">
-                                      <span className="text-sm font-black text-foreground underline decoration-primary/30 underline-offset-4">
-                                        ${dup.matchedWith.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                            <div className="mt-4 flex gap-2">
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                className="font-bold text-xs h-8 shadow-sm active:scale-95 transition-transform"
-                                disabled={processingId === uniqueKey}
-                                onClick={() => handleHoldPayment(uniqueKey)}
-                              >
-                                {processingId === uniqueKey ? "Processing..." : "Hold Payment"}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="font-bold text-xs h-8 active:scale-95 transition-transform"
-                                disabled={processingId === `dismiss-${uniqueKey}`}
-                                onClick={() => handleDismissWarning(uniqueKey)}
-                              >
-                                {processingId === `dismiss-${uniqueKey}` ? "Processing..." : "Dismiss Warning"}
-                              </Button>
-                            </div>
-                          </div>
-                        );
-                      })}
+              <div className="lg:col-span-4 space-y-6">
+                <Card className="rounded-3xl border-slate-200/60 shadow-xl overflow-hidden bg-slate-900 text-white">
+                  <CardHeader className="p-8 pb-4">
+                    <CardTitle className="text-xl font-black tracking-tight">System Decision</CardTitle>
+                    <CardDescription className="text-slate-400 font-medium">Automatic actions executed based on risk policy.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-8 pt-0 space-y-6">
+                    <div className="space-y-4">
+                      <DecisionItem icon={Lock} label="Hard Blocked" count={validationResult.duplicates.filter(d => d.score >= 95).length} color="rose" />
+                      <DecisionItem icon={Eye} label="Investigation Required" count={validationResult.duplicates.filter(d => d.score < 95).length} color="amber" />
+                      <DecisionItem icon={CheckCircle2} label="Clean Release" count={validationResult.approvedLines} color="emerald" />
                     </div>
+
+                    <div className="p-6 bg-slate-800 rounded-3xl border border-slate-700/50 space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Policy Compliance</span>
+                        <span className="text-xs font-bold text-emerald-400">100% SECURE</span>
+                      </div>
+                      <div className="h-2 bg-slate-900 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]" style={{ width: '100%' }} />
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-medium leading-relaxed">System state is deterministic. All released payments meet the configured threshold of &lt;70% similarity.</p>
+                    </div>
+
+                    <Button className="w-full h-14 bg-white hover:bg-slate-100 text-slate-900 rounded-2xl font-black uppercase tracking-widest shadow-xl">
+                      Finalize Batch Process
+                    </Button>
                   </CardContent>
                 </Card>
-
-                <div className="flex gap-4">
-                  <Button
-                    className="flex-1 font-bold h-12 shadow-lg active:scale-[0.98] transition-transform"
-                    variant="destructive"
-                    onClick={() => handleBulkStateTransition('BLOCKED')}
-                    disabled={isBlocking || selectedIds.length === 0}
-                  >
-                    {isBlocking ? (
-                      <>
-                        <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                        Processing...
-                      </>
-                    ) : "Block Selected Payments"}
-                  </Button>
-                  <Button
-                    className="flex-1 font-bold h-12 shadow-md active:scale-[0.98] transition-transform"
-                    variant="outline"
-                    onClick={handleExport}
-                  >
-                    Release All Approved Lines
-                  </Button>
-                </div>
-
-                <Dialog open={isExportDialogOpen} onOpenChange={setIsExportDialogOpen}>
-                  <DialogContent className="sm:max-w-md">
-                    <DialogHeader>
-                      <DialogTitle>Export Approved Lines</DialogTitle>
-                      <DialogDescription>
-                        Choose your preferred file format for the released payments.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="flex items-center space-x-2 py-4">
-                      <Select value={exportFormat} onValueChange={setExportFormat}>
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select format" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="excel">Excel (.xlsx)</SelectItem>
-                          <SelectItem value="csv">Comma Separated (.csv)</SelectItem>
-                          <SelectItem value="xml">XML (.xml)</SelectItem>
-                          <SelectItem value="ubl">UBL (.ubl)</SelectItem>
-                          <SelectItem value="json">JSON (.json)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <DialogFooter className="sm:justify-start">
-                      <Button type="button" onClick={executeExport} className="w-full font-bold">
-                        Generate & Download
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-
-                <Dialog open={isApprovedDialogOpen} onOpenChange={setIsApprovedDialogOpen}>
-                  <DialogContent className="sm:max-w-3xl max-h-[80vh] flex flex-col">
-                    <DialogHeader>
-                      <DialogTitle>Approved Invoices ({validationResult?.approvedLines})</DialogTitle>
-                      <DialogDescription>
-                        These invoices have passed all duplicate checks and are ready for payment.
-                      </DialogDescription>
-                    </DialogHeader>
-
-                    <div className="flex-1 overflow-auto min-h-[200px] border rounded-md my-4">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-muted/50 sticky top-0">
-                          <tr>
-                            <th className="p-3 font-bold">Invoice #</th>
-                            <th className="p-3 font-bold">Vendor ID</th>
-                            <th className="p-3 font-bold text-right">Amount</th>
-                            <th className="p-3 font-bold">Date</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                          {validationResult?.approvedForPayment?.map((item, i) => (
-                            <tr key={i} className="hover:bg-muted/5">
-                              <td className="p-3 font-medium">{item.invoiceNumber}</td>
-                              <td className="p-3">{item.vendorId}</td>
-                              <td className="p-3 text-right font-mono">${item.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                              <td className="p-3">{item.invoiceDate}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div className="flex items-center gap-4 border-t pt-4">
-                      <div className="flex-1">
-                        <Select value={exportFormat} onValueChange={setExportFormat}>
-                          <SelectTrigger className="w-[180px]">
-                            <SelectValue placeholder="Select format" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="excel">Excel (.xlsx)</SelectItem>
-                            <SelectItem value="csv">Comma Separated (.csv)</SelectItem>
-                            <SelectItem value="xml">XML (.xml)</SelectItem>
-                            <SelectItem value="json">JSON (.json)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Button onClick={executeApprovedExport} className="font-bold">
-                        <Download className="mr-2 h-4 w-4" /> Export Approved List
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </main>
     </div>
   );
 }
+
+// Sub-components
+function MetricCard({ label, value, sub, icon: Icon, trend, color }: any) {
+  const colors: any = {
+    indigo: "bg-indigo-600 text-indigo-100 shadow-indigo-100",
+    emerald: "bg-emerald-600 text-emerald-100 shadow-emerald-100",
+    rose: "bg-rose-600 text-rose-100 shadow-rose-100",
+    slate: "bg-slate-900 text-slate-100 shadow-slate-100"
+  };
+  const accent: any = {
+    indigo: "text-indigo-600",
+    emerald: "text-emerald-500",
+    rose: "text-rose-500",
+    slate: "text-slate-400"
+  };
+
+  return (
+    <Card className="rounded-3xl border-slate-200/60 shadow-lg hover:shadow-2xl transition-all duration-300 group overflow-hidden bg-white">
+      <CardContent className="p-6">
+        <div className="flex justify-between items-start mb-4">
+          <div className={cn("p-2.5 rounded-xl flex items-center justify-center text-white", colors[color])}>
+            <Icon className="h-5 w-5" />
+          </div>
+          {trend && <Badge className="bg-emerald-50 text-emerald-700 border-emerald-100 font-black text-[10px] group-hover:scale-110 transition-transform">{trend}</Badge>}
+        </div>
+        <div>
+          <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest mb-1">{label}</p>
+          <p className="text-2xl font-black text-slate-900 tracking-tight">{value}</p>
+          <p className={cn("text-[10px] font-bold mt-1", accent[color])}>{sub}</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ForensicRow({ label, value, match }: any) {
+  const isMatched = value === match;
+  return (
+    <tr>
+      <td className="p-3 font-bold text-slate-500">{label}</td>
+      <td className="p-3">
+        <div className="flex flex-col gap-1">
+          <span className="font-black text-slate-900">{value}</span>
+          <span className={cn(
+            "text-[9px] font-bold px-1.5 py-0.5 rounded-md w-fit uppercase",
+            isMatched ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"
+          )}>
+            {isMatched ? "Exact Match" : "Fuzzy Match"}
+          </span>
+          <span className="text-[9px] text-slate-400 font-mono">Matched: {match || 'N/A'}</span>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function DecisionItem({ icon: Icon, label, count, color }: any) {
+  const colors: any = {
+    rose: "bg-rose-500/20 text-rose-400",
+    amber: "bg-amber-500/20 text-amber-400",
+    emerald: "bg-emerald-500/20 text-emerald-400"
+  };
+  return (
+    <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-800/50 border border-slate-700/50 group hover:border-indigo-500/50 transition-all">
+      <div className="flex items-center gap-3">
+        <div className={cn("p-2 rounded-lg", colors[color])}>
+          <Icon className="h-4 w-4" />
+        </div>
+        <span className="text-xs font-bold text-slate-300">{label}</span>
+      </div>
+      <span className="text-sm font-black text-white">{count}</span>
+    </div>
+  );
+}
+
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";

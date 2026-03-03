@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ERPType, EntityType, generateCSVTemplate, generateTemplateDataarray } from "@/lib/erp-templates";
+import { ERPType, EntityType, generateCSVTemplate, generateTemplateDataArray } from "@/lib/erp-templates";
 import * as xlsx from "xlsx";
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const erp = searchParams.get("erp") as ERPType;
-    const entityType = searchParams.get("entityType") as EntityType;
-    const format = searchParams.get("format") || "csv";
+    // Support both entity and entityType for broad compatibility
+    const entityType = (searchParams.get("entityType") || searchParams.get("entity")) as EntityType;
+    const format = (searchParams.get("format") || "csv").toLowerCase();
 
     if (!erp || !entityType) {
         return NextResponse.json({ error: "Missing erp or entityType parameter" }, { status: 400 });
@@ -15,8 +16,8 @@ export async function GET(request: NextRequest) {
     try {
         const headers = new Headers();
 
-        if (format === "excel") {
-            const dataArray = generateTemplateDataarray(erp, entityType);
+        if (format === "excel" || format === "xlsx") {
+            const dataArray = generateTemplateDataArray(erp, entityType);
             const worksheet = xlsx.utils.aoa_to_sheet(dataArray);
             const workbook = xlsx.utils.book_new();
             xlsx.utils.book_append_sheet(workbook, worksheet, "Template");

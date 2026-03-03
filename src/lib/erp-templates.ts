@@ -172,25 +172,22 @@ export const ERP_MAPPINGS: Record<ERPType, Record<EntityType, TemplateField[]>> 
  * Generate a CSV template string for the given ERP and Entity type
  */
 export function generateCSVTemplate(erp: ERPType, entityType: EntityType): string {
-    const data = generateTemplateDataarray(erp, entityType);
+    const data = generateTemplateDataArray(erp, entityType);
     return data.map(row => row.join(',')).join('\n');
 }
 
-/**
- * Returns a 2D array representation of the template (useful for Excel generation)
- */
-export function generateTemplateDataarray(erp: ERPType, entityType: EntityType): string[][] {
+export function generateTemplateDataArray(erp: ERPType, entityType: EntityType): string[][] {
     const fields = ERP_MAPPINGS[erp][entityType];
     if (!fields) {
         throw new Error(`Template not found for ERP: ${erp}, Entity Type: ${entityType}`);
     }
 
-    // Format headers based on required status
+    // Format headers: Use the SAP/ERP-specific names as the primary header
     const headers = fields.map(f => {
         return f.required ? `${f.name} (*)` : f.name;
     });
 
-    // The first row is headers, the second is conceptual mapping for clarity (optional, we could leave empty)
+    // The second row is the conceptual mapping (human readable)
     const mappedRow = fields.map(f => f.mappedTo || f.name);
 
     return [headers, mappedRow];

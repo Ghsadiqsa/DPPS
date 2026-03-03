@@ -1,52 +1,93 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { storage } from '@/lib/storage';
-import { insertInvoiceSchema } from '@/lib/schema';
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { sql, and, eq, gte, lte, ilike, or } from "drizzle-orm";
+import { invoices, vendors } from "@/lib/schema";
 
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
-        const caseId = searchParams.get('caseId');
-        const statuses = searchParams.getAll('status');
 
-        let invoicesData;
+        // Filters
+        const startDate = searchParams.get("startDate");
+        const endDate = searchParams.get("endDate");
+        const erpType = searchParams.get("erpType");
+        const companyCode = searchParams.get("companyCode");
+        const vendorCode = searchParams.get("vendorCode");
+        const currency = searchParams.get("currency");
+        const lifecycleState = searchParams.get("lifecycleState");
+        const riskBand = searchParams.get("riskBand");
+        const search = searchParams.get("search");
 
-        if (caseId) {
-            invoicesData = await storage.getInvoicesByCase(caseId);
-        } else if (statuses.length > 0) {
-            // Handle multiple status filters
-            const { db } = await import('@/lib/db');
-            const { invoices } = await import('@/lib/schema');
-            const { inArray, desc } = await import('drizzle-orm');
+        // Pagination
+        const page = parseInt(searchParams.get("page") || "1");
+        const limit = parseInt(searchParams.get("limit") || "50");
+        const offset = (page - 1) * limit;
 
-            invoicesData = await db.select()
-                .from(invoices)
-                .where(inArray(invoices.status, statuses))
-                .orderBy(desc(invoices.createdAt));
-        } else {
-            invoicesData = await storage.getAllInvoices();
+        // Building dynamic filter for Drizzle
+        const filters = [];
+        if (erpType) filters.push(eq(invoices.erpType, erpType));
+        if (companyCode) filters.push(eq(invoices.companyCode, companyCode));
+        if (vendorCode) filters.push(eq(invoices.vendorCode, vendorCode));
+        if (currency) filters.push(eq(invoices.currency, currency));
+        if (lifecycleState) filters.push(eq(invoices.lifecycleState, lifecycleState));
+        if (riskBand) filters.push(eq(invoices.riskBand, riskBand));
+
+        if (startDate) filters.push(gte(invoices.invoiceDate, new Date(startDate)));
+        if (endDate) filters.push(lte(invoices.invoiceDate, new Date(endDate)));
+
+        if (search) {
+            filters.push(or(
+                ilike(invoices.invoiceNumber, `%${search}%`),
+                ilike(invoices.vendorCode, `%${search}%`),
+                ilike(invoices.poNumber, `%${search}%`)
+            ));
         }
 
-        return NextResponse.json(invoicesData);
-    } catch (error) {
-        console.error('Error fetching invoices:', error);
-        return NextResponse.json(
-            { error: 'Failed to fetch invoices' },
-            { status: 500 }
-        );
-    }
-}
+        const whereClause = filters.length > 0 ? and(...filters) : undefined;
 
-export async function POST(request: NextRequest) {
-    try {
-        const body = await request.json();
-        const validatedData = insertInvoiceSchema.parse(body);
-        const newInvoice = await storage.createInvoice(validatedData);
-        return NextResponse.json(newInvoice, { status: 201 });
+        // 1. Fetch Invoices with Vendor Join
+        const results = await db.select({
+            id: invoices.id,
+            invoiceNumber: invoices.invoiceNumber,
+            invoiceDate: invoices.invoiceDate,
+            grossAmount: invoices.grossAmount,
+            currency: invoices.currency,
+            vendorCode: invoices.vendorCode,
+            vendorName: vendors.name,
+            lifecycleState: invoices.lifecycleState,
+            riskScore: invoices.riskScore,
+            riskBand: invoices.riskBand,
+            poNumber: invoices.poNumber,
+            erpType: invoices.erpType,
+            companyCode: invoices.companyCode,
+            paymentStatus: invoices.paymentStatus
+        })
+            .from(invoices)
+            .leftJoin(vendors, eq(invoices.vendorId, vendors.id))
+            .where(whereClause)
+            .limit(limit)
+            .offset(offset)
+            .orderBy(sql`${invoices.invoiceDate} DESC`);
+
+        // 2. Fetch Total Count for Pagination
+        const countResult = await db.select({ count: sql`COUNT(*)` })
+            .from(invoices)
+            .where(whereClause);
+
+        const totalCount = Number(countResult[0]?.count || 0);
+
+        return NextResponse.json({
+            data: results,
+            pagination: {
+                totalCount,
+                totalPages: Math.ceil(totalCount / limit),
+                currentPage: page,
+                limit
+            }
+        });
+
     } catch (error) {
-        console.error('Error creating invoice:', error);
-        return NextResponse.json(
-            { error: 'Invalid invoice data' },
-            { status: 400 }
-        );
+        console.error("Invoices API Error:", error);
+        return NextResponse.json({ error: "Failed to fetch invoices." }, { status: 500 });
     }
 }

@@ -15,6 +15,27 @@
       "when": 1772382491084,
       "tag": "0001_rainy_vin_gonzales",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772491417612,
+      "tag": "0002_numerous_karma",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1772493204851,
+      "tag": "0003_simple_scarecrow",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1772497263857,
+      "tag": "0004_empty_blacklash",
+      "breakpoints": true
     }
   ]
 }

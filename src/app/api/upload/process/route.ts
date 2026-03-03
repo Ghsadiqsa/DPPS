@@ -1,137 +1,125 @@
 import { NextRequest, NextResponse } from "next/server";
-import { after } from "next/server";
 import * as xlsx from "xlsx";
-import { ERPType, EntityType, validateCSVRow } from "@/lib/erp-templates";
+import { ERPType, EntityType } from "@/lib/erp-templates";
 import { db } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import {
-    uploadBatches,
-    vendors,
-    customers,
-    financialDocuments,
-    InsertVendor,
-    InsertCustomer,
-    InsertFinancialDocument,
-    historicalStaging
-} from "@/lib/schema";
+import { uploadBatches, historicalStaging } from "@/lib/schema";
 
 export async function POST(request: NextRequest) {
+    const batchRef: { id: string | null } = { id: null };
     try {
         const formData = await request.formData();
         const file = formData.get("file") as File;
         const erp = formData.get("erp") as ERPType;
         const entityType = formData.get("entityType") as EntityType;
-        const isSimulation = formData.get("isSimulation") === 'true';
+        const isSimulation = formData.get("isSimulation") === "true";
 
         if (!file || !erp || !entityType) {
-            return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+            return NextResponse.json({ error: "Missing required fields: file, erp, entityType" }, { status: 400 });
         }
 
+        // --- Parse file ---
         const buffer = await file.arrayBuffer();
         const workbook = xlsx.read(buffer, { type: "array" });
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
-        const data = xlsx.utils.sheet_to_json(sheet) as Record<string, any>[];
 
-        // Remove the first conceptually mapped row if present (optional heuristic - 
-        // often the second row in our template is just describing the fields)
-        // Actually, `sheet_to_json` takes row 1 as headers. If row 2 is the mapped names, 
-        // it will show up as the first data element. 
-        // Let's filter it out if it looks like the mapped row.
-        let rowsToProcess = data;
-        if (data.length > 0) {
-            const firstRowValues = Object.values(data[0]);
-            // If the first row values strongly resemble the field names themselves, drop it.
-            // E.g. "Vendor ID", "Tax ID"
-            if (firstRowValues.some(v => typeof v === 'string' && (v.includes('ID') || v.includes('Name')))) {
-                rowsToProcess = data.slice(1);
+        // Use header:1 to get raw rows, then first row is the header
+        const rawRows = xlsx.utils.sheet_to_json<any[]>(sheet, { header: 1 });
+        if (rawRows.length < 2) {
+            return NextResponse.json({ error: "File has no data rows (only header or empty)" }, { status: 400 });
+        }
+
+        // Row 0 = ERP field names (primary header used for upload)
+        // Row 1 = Conceptual mapping row (skip this — it's our template description row)
+        // Row 2+ = actual data
+        const headers = (rawRows[0] as string[]).map(h => String(h).replace(" (*)", "").trim());
+
+        // Detect if row[1] is the "mapped" description row (all strings matching known conceptual names)
+        // Safe heuristic: if >50% of cells in row[1] are strings that don't look like actual data, skip it
+        let dataStartRow = 1;
+        if (rawRows.length > 2) {
+            const row1Values = rawRows[1] as any[];
+            const stringCount = row1Values.filter(v => typeof v === "string").length;
+            const numericCount = row1Values.filter(v => typeof v === "number").length;
+            if (stringCount > numericCount && stringCount >= headers.length * 0.5) {
+                dataStartRow = 2; // skip the conceptual mapping row
             }
         }
 
-        // 1. Acknowledge and create batch immediately
+        const dataRows = rawRows.slice(dataStartRow);
+
+        // Convert to key-value objects using ERP headers
+        const data: Record<string, any>[] = dataRows
+            .filter(row => (row as any[]).some((cell: any) => cell !== null && cell !== undefined && cell !== ""))
+            .map(row => {
+                const obj: Record<string, any> = {};
+                headers.forEach((h, i) => { obj[h] = (row as any[])[i] ?? ""; });
+                return obj;
+            });
+
+        if (data.length === 0) {
+            return NextResponse.json({ error: "No valid data rows found in file" }, { status: 400 });
+        }
+
+        // --- Create batch record ---
         const [batch] = await db.insert(uploadBatches).values({
             erpType: erp,
             entityType: entityType,
-            status: "processing",
-            totalRows: rowsToProcess.length,
+            status: isSimulation ? "simulated" : "processing",
+            totalRows: data.length,
             errorRows: 0,
         }).returning();
+        batchRef.id = batch.id;
 
-        // 2. Offload the heavy synchronous validation and DB mapping to background
-        after(async () => {
-            console.log(`[Background] Starting processing for batch ${batch.id}...`);
-            let errorCount = 0;
-            const validRows: any[] = [];
-            const validationErrors: any[] = [];
-
-            // Validate each row
-            rowsToProcess.forEach((row, index) => {
-                const missingFields = validateCSVRow(erp, entityType, row);
-                if (missingFields.length > 0) {
-                    errorCount++;
-                    validationErrors.push({
-                        row: index + 2, // +2 for header and 0-index offset
-                        errors: missingFields.map(f => `Missing required field: ${f}`)
-                    });
-                } else {
-                    const cleanRow: Record<string, any> = {};
-                    for (const [key, value] of Object.entries(row)) {
-                        const cleanKey = key.replace(' (*)', '').trim();
-                        cleanRow[cleanKey] = value;
-                    }
-                    validRows.push(cleanRow);
-                }
+        if (isSimulation) {
+            await db.update(uploadBatches).set({ status: "completed" }).where(eq(uploadBatches.id, batch.id));
+            return NextResponse.json({
+                message: "Simulation complete. File structure is valid.",
+                batchId: batch.id,
+                totalRows: data.length,
+                isSimulation: true,
             });
+        }
 
-            // If entirely failed
-            if (errorCount > 0 && validRows.length === 0) {
-                await db.update(uploadBatches)
-                    .set({ status: "error", errorRows: errorCount })
-                    .where(eq(uploadBatches.id, batch.id));
-                return;
+        // --- Stage records synchronously (sequential inserts — no transactions for Neon HTTP) ---
+        try {
+            const CHUNK_SIZE = 500;
+            for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+                const chunk = data.slice(i, i + CHUNK_SIZE).map(row => ({
+                    batchId: batch.id,
+                    entityType: entityType.toLowerCase().replace(/ /g, "_"),
+                    rowData: row,
+                    validationErrors: [],
+                }));
+                await db.insert(historicalStaging).values(chunk);
             }
+            await db.update(uploadBatches)
+                .set({ status: "pending_review", errorRows: 0 })
+                .where(eq(uploadBatches.id, batch.id));
+        } catch (stagingErr: any) {
+            console.error(`[Upload] Staging failed for batch ${batch.id}:`, stagingErr);
+            await db.update(uploadBatches)
+                .set({ status: "error", errorRows: data.length })
+                .where(eq(uploadBatches.id, batch.id));
+            return NextResponse.json({ error: "Failed to stage records: " + stagingErr.message, batchId: batch.id }, { status: 500 });
+        }
 
-            // Insert valid rows into the staging table (Phase 7: Preview Before Save)
-            // But Skip if in Phase 8 (Simulation Mode)
-            try {
-                if (!isSimulation && validRows.length > 0) {
-                    const stagingInserts = validRows.map(row => ({
-                        batchId: batch.id,
-                        entityType: entityType.toLowerCase().replace(/ /g, '_'), // vendors, customers, financial_documents
-                        rowData: row,
-                        validationErrors: [],
-                    }));
-
-                    await db.insert(historicalStaging).values(stagingInserts);
-                }
-
-                // Complete the batch with pending_review (or completed if simulated)
-                await db.update(uploadBatches)
-                    .set({
-                        status: errorCount > 0 ? (isSimulation ? "completed_with_errors" : "error") : (isSimulation ? "completed" : "pending_review"),
-                        errorRows: errorCount
-                    })
-                    .where(eq(uploadBatches.id, batch.id));
-
-                console.log(`[Background] Batch ${batch.id} finished processing. Mode: ${isSimulation ? 'Simulation' : 'Execution'}`);
-            } catch (err) {
-                console.error(`[Background] Failed to insert DB records for batch ${batch.id}:`, err);
-                await db.update(uploadBatches)
-                    .set({ status: "error" })
-                    .where(eq(uploadBatches.id, batch.id));
-            }
-        });
-
-        // 3. Return 202 Accepted Immediately so the UI and Vercel proxy don't timeout
         return NextResponse.json({
-            message: "Upload accepted and processing in background.",
+            message: "Upload processed successfully.",
             batchId: batch.id,
-            totalRows: rowsToProcess.length,
-            isSimulation
-        }, { status: 202 });
+            totalRows: data.length,
+            isSimulation: false,
+        }, { status: 200 });
 
-    } catch (error) {
-        console.error("Error processing CSV:", error);
-        return NextResponse.json({ error: "Failed to process upload" }, { status: 500 });
+    } catch (error: any) {
+        console.error("Error processing upload:", error);
+        // Attempt to mark batch as error if it was created
+        if (batchRef.id) {
+            try {
+                await db.update(uploadBatches).set({ status: "error" }).where(eq(uploadBatches.id, batchRef.id));
+            } catch { /* ignore */ }
+        }
+        return NextResponse.json({ error: error.message || "Failed to process upload" }, { status: 500 });
     }
 }

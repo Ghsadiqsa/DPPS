@@ -26,22 +26,22 @@ export async function POST(request: NextRequest) {
 
         const config: DetectionConfig = { ...DEFAULT_CONFIG, ...userConfig };
         const results: {
-            invoice: InvoiceData & { id?: string; status?: string };
+            invoice: InvoiceData & { id?: string; lifecycleState?: string };
             detection: DetectionResult | null;
-            status: 'CLEAN' | 'DUPLICATE' | 'FLAGGED';
+            outcome: 'CLEAN' | 'POTENTIAL_DUPLICATE' | 'BLOCKED';
         }[] = [];
 
-        // Check duplicates within the proposal first
+        // 1. Within-proposal duplicate check
         const proposalDuplicates = detectDuplicatesInProposal(
             invoicesToValidate as InvoiceData[],
             config
         );
 
-        // Check each invoice
+        // 2. Cross-reference with historical data and proposal matches
         for (let i = 0; i < invoicesToValidate.length; i++) {
             const rawInv = invoicesToValidate[i];
 
-            // Normalize amount
+            // Normalize amount (CFO-grade precision)
             let amount = 0;
             if (typeof rawInv.amount === 'number') {
                 amount = rawInv.amount;
@@ -70,6 +70,7 @@ export async function POST(request: NextRequest) {
                 invoiceDate,
             };
 
+            // Historical check (against Billion-row scale potential)
             const historicalCandidates = await storage.findDuplicateInvoices(
                 currentInvoice.invoiceNumber,
                 currentInvoice.vendorId,
@@ -78,13 +79,12 @@ export async function POST(request: NextRequest) {
 
             let bestMatch: DetectionResult | null = null;
 
-            // Historical check
             for (const cand of historicalCandidates) {
                 const res = detectDuplicate(currentInvoice, cand, config);
                 if (!bestMatch || res.score > bestMatch.score) bestMatch = res;
             }
 
-            // Proposal check
+            // Proposal match check
             const pMatches = proposalDuplicates.get(i);
             if (pMatches) {
                 for (const m of pMatches) {
@@ -92,53 +92,58 @@ export async function POST(request: NextRequest) {
                 }
             }
 
-            let status: 'CLEAN' | 'DUPLICATE' | 'FLAGGED' = 'CLEAN';
+            // 3. Determine Outcome based on State Machine Rules
+            let outcome: 'CLEAN' | 'POTENTIAL_DUPLICATE' | 'BLOCKED' = 'CLEAN';
             if (bestMatch) {
-                if (bestMatch.autoHold || bestMatch.riskLevel === 'critical') status = 'DUPLICATE';
-                else if (bestMatch.riskLevel !== 'low') status = 'FLAGGED';
+                if (bestMatch.score >= 95) outcome = 'BLOCKED';
+                else if (bestMatch.score >= 70) outcome = 'POTENTIAL_DUPLICATE';
             }
 
             results.push({
                 invoice: currentInvoice,
                 detection: bestMatch,
-                status
+                outcome
             });
         }
 
-        // Upsert vendors with explicit target
+        // 4. Persistence Layer (Audit-grade)
         const vIds = Array.from(new Set(results.map(r => r.invoice.vendorId || 'UNKNOWN_VENDOR')));
         for (const vid of vIds) {
             try {
-                // Check if vendor exists
-                const [exists] = await db.select().from(vendors).where(eq(vendors.id, vid)).limit(1);
+                const [exists] = await db.select().from(vendors).where(eq(vendors.vendorCode, vid)).limit(1);
                 if (!exists) {
                     await db.insert(vendors).values({
-                        id: vid,
-                        name: vid === 'UNKNOWN_VENDOR' ? 'Unknown Vendor' : `Vendor ${vid}`,
+                        vendorCode: vid,
+                        name: vid === 'UNKNOWN_VENDOR' ? 'Placeholder Vendor' : `Vendor ${vid}`,
+                        erpType: 'GENERIC',
+                        companyCode: '1000',
                         riskLevel: 'low',
                         totalSpend: "0",
                         duplicateCount: 0
-                    }).onConflictDoNothing({ target: vendors.id });
+                    }).onConflictDoNothing();
                 }
             } catch (err) {
-                console.error(`Vendor error for ${vid}:`, err);
+                console.error(`Vendor sync failure: ${vid}`, err);
             }
         }
 
-        // Batch insert invoices
         const invoiceInserts = results.map(r => {
             const date = r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate : new Date();
             const signals = r.detection?.signals?.filter(s => s.triggered).map(s => s.name) || [];
 
             return {
                 invoiceNumber: String(r.invoice.invoiceNumber || 'INV-UNK'),
-                vendorId: String(r.invoice.vendorId || 'UNKNOWN_VENDOR'),
-                amount: Number(r.invoice.amount).toFixed(2),
+                vendorCode: String(r.invoice.vendorId || 'UNKNOWN_VENDOR'),
+                erpType: 'GENERIC',
+                companyCode: '1000',
+                grossAmount: Number(r.invoice.amount).toFixed(2),
                 invoiceDate: date,
-                status: r.status === 'CLEAN' ? 'UPLOADED' : 'AUTO_FLAGGED',
-                isDuplicate: r.status !== 'CLEAN',
+                currency: 'USD',
+                lifecycleState: r.outcome === 'CLEAN' ? 'PROPOSAL' : (r.outcome === 'BLOCKED' ? 'BLOCKED' : 'POTENTIAL_DUPLICATE'),
                 similarityScore: Math.round(r.detection?.score || 0),
-                signals: Array.isArray(signals) ? signals : [],
+                riskScore: Math.round(r.detection?.score || 0),
+                riskBand: (r.detection?.score || 0) >= 90 ? 'HIGH' : (r.detection?.score || 0) >= 70 ? 'MEDIUM' : 'LOW',
+                signals: signals,
                 matchedInvoiceId: r.detection?.matchedInvoice?.id || null,
             };
         });
@@ -147,57 +152,43 @@ export async function POST(request: NextRequest) {
             const inserted = await db.insert(invoices).values(invoiceInserts).returning({
                 id: invoices.id,
                 invoiceNumber: invoices.invoiceNumber,
-                amount: invoices.amount
             });
 
-            // Map IDs back based on insertion order
             results.forEach((r, idx) => {
-                if (inserted[idx]) {
-                    r.invoice.id = inserted[idx].id;
-                }
+                if (inserted[idx]) r.invoice.id = inserted[idx].id;
             });
         }
 
-        // Construct response
-        const summary = {
+        // 5. Build Standardized Controller Response
+        return NextResponse.json({
             totalLines: results.length,
-            approvedLines: results.filter(r => r.status === 'CLEAN').length,
-            heldLines: results.filter(r => r.status === 'DUPLICATE').length,
-            reviewLines: results.filter(r => r.status === 'FLAGGED').length,
-            duplicatesDetected: results.filter(r => r.status !== 'CLEAN').length,
-        };
-
-        const duplicates = results
-            .filter(r => r.status !== 'CLEAN')
-            .map(r => ({
+            approvedLines: results.filter(r => r.outcome === 'CLEAN').length,
+            duplicatesDetected: results.filter(r => r.outcome !== 'CLEAN').length,
+            duplicates: results
+                .filter(r => r.outcome !== 'CLEAN')
+                .map(r => ({
+                    id: r.invoice.id,
+                    invoiceNumber: r.invoice.invoiceNumber,
+                    vendorId: r.invoice.vendorId,
+                    amount: r.invoice.amount,
+                    invoiceDate: r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate.toISOString() : r.invoice.invoiceDate,
+                    status: (r.outcome === 'BLOCKED' ? 'BLOCKED' : 'POTENTIAL_DUPLICATE'),
+                    score: Math.round(r.detection?.score || 0),
+                    riskLevel: r.detection?.riskLevel,
+                    signals: r.detection?.signals?.filter(s => s.triggered) || [],
+                    matchedWith: r.detection?.matchedInvoice,
+                })),
+            approvedForPayment: results.filter(r => r.outcome === 'CLEAN').map(r => ({
                 id: r.invoice.id,
                 invoiceNumber: r.invoice.invoiceNumber,
                 vendorId: r.invoice.vendorId,
                 amount: r.invoice.amount,
-                invoiceDate: r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate.toISOString() : r.invoice.invoiceDate,
-                status: r.status === 'DUPLICATE' ? 'held' : 'review',
-                score: r.detection?.score,
-                riskLevel: r.detection?.riskLevel,
-                autoHold: r.detection?.autoHold,
-                signals: r.detection?.signals?.filter(s => s.triggered) || [],
-                matchedWith: r.detection?.matchedInvoice,
-            }));
-
-        return NextResponse.json({
-            ...summary,
-            config,
-            duplicates,
-            approvedForPayment: results.filter(r => r.status === 'CLEAN').map(r => ({
-                ...r.invoice,
                 invoiceDate: r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate.toISOString() : r.invoice.invoiceDate
             })),
         });
 
     } catch (error: any) {
-        console.error("Payment Gate Validation Error:", error);
-        return NextResponse.json(
-            { error: "Validation failed", details: error.message || String(error) },
-            { status: 500 }
-        );
+        console.error("Payment Gate Critical Failure:", error);
+        return NextResponse.json({ error: "Proposal processing failed internally", details: error.message }, { status: 500 });
     }
 }

@@ -15,7 +15,8 @@ import {
   Database,
   Shield,
   BookOpen,
-  UploadCloud
+  UploadCloud,
+  CheckCircle2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -30,6 +31,7 @@ const navigation = [
   { name: "Open Potential Duplicates", href: "/pre-pay", icon: ShieldAlert },
   { name: "Payment Gate", href: "/gate", icon: FileCheck },
   { name: "Recovery", href: "/recovery", icon: History },
+  { name: "Duplicate Resolved", href: "/resolved", icon: CheckCircle2 },
   { name: "Reports", href: "/reports", icon: BarChart3 },
   { name: "Historical Data Load", href: "/historical-load", icon: UploadCloud },
   { name: "Documentation", href: "/docs", icon: BookOpen },
@@ -93,7 +95,7 @@ export function Sidebar() {
     <div className="flex h-screen w-64 flex-col bg-[#1c2d3d] text-white border-r border-[#2c3e50] transition-all duration-300 ease-in-out z-20 shadow-xl">
       <div className="flex h-12 items-center px-4 bg-[#121c26] border-b border-[#2c3e50]/50">
         <ShieldIcon className="h-6 w-6 text-[#3498db] shrink-0" />
-        <span className="text-sm font-bold font-heading tracking-tight ml-4 whitespace-nowrap text-white">DPPS Enterprise</span>
+        <span className="text-sm font-bold font-heading tracking-tight ml-4 whitespace-nowrap text-white">Financial Control Tower</span>
       </div>
 
       <div className="flex-1 overflow-y-auto py-4">

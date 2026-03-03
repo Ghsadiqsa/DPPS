@@ -1,176 +1,355 @@
 'use client';
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell
-} from "recharts";
-import { ShieldCheck, ShieldAlert, TrendingUp, DollarSign, RefreshCw } from "lucide-react";
-import {
-  TooltipProvider,
-  TooltipTrigger,
-  TooltipContent,
-  Tooltip,
-} from "@/components/ui/tooltip";
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { formatCurrency } from "@/lib/currency";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import {
+  Download,
+  Filter,
+  Search,
+  Calendar,
+  RefreshCcw,
+  FileSpreadsheet,
+  Lock,
+  ShieldAlert,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+  TrendingUp,
+  CheckCircle2,
+  ArrowDownToLine,
+  Activity,
+  History,
+  FileText
+} from "lucide-react";
+import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { format, subYears } from "date-fns";
+import { toast } from "sonner";
+import { useSession } from "next-auth/react";
+import { cn } from "@/lib/utils";
 
-export default function Reports() {
-  const { data, isLoading } = useQuery({
-    queryKey: ['reports'],
+export default function ReportsEngineElite() {
+  const { data: session } = useSession();
+
+  // 1. Global Filter State (Matched to Dashboard for parity)
+  const [filters, setFilters] = useState({
+    dateRange: {
+      from: format(subYears(new Date(), 1), 'yyyy-MM-dd'),
+      to: format(new Date(), 'yyyy-MM-dd')
+    },
+    riskBands: [] as string[],
+    statuses: [] as string[],
+    search: '',
+    currency: 'all',
+    erpType: 'all',
+    companyCode: 'all'
+  });
+
+  const [pagination, setPagination] = useState({ page: 1, limit: 25 });
+  const [isExporting, setIsExporting] = useState(false);
+
+  // 2. Fetch Data
+  const { data, isLoading, refetch, isFetching } = useQuery<any>({
+    queryKey: ['reportsEngineHardened', filters, pagination],
     queryFn: async () => {
-      const res = await fetch('/api/reports');
+      const res = await fetch('/api/reports/engine', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filters, pagination })
+      });
       if (!res.ok) throw new Error("Failed to fetch reports");
       return res.json();
     }
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <RefreshCw className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const summary = data?.summary || {};
 
-  const { kpi, monthlyData, categoryData } = data || {
-    kpi: { prevented: 0, successRate: 0, confidenceAvg: 0, detectedRisks: 0 },
-    monthlyData: [],
-    categoryData: []
+  const handleExport = async () => {
+    setIsExporting(true);
+    const toastId = toast.loading("Generating Multi-Sheet Audit Export...");
+    try {
+      const res = await fetch('/api/reports/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filters })
+      });
+
+      if (!res.ok) throw new Error("Export failed");
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DPPS_Audit_Export_${format(new Date(), 'yyyyMMdd_HHmm')}.xlsx`;
+
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      a.remove();
+
+      toast.success("Excel Report Delivered", { id: toastId });
+    } catch (err) {
+      toast.error("Failed to generate report", { id: toastId });
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const safeFormatDate = (dateStr: any) => {
+    if (!dateStr) return "-";
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return "-";
+      return format(d, 'MMM dd, yyyy');
+    } catch {
+      return "-";
+    }
   };
 
   return (
+    <div className="min-h-screen bg-slate-50/50 pb-20">
 
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold font-heading text-foreground">Analytics & Reports</h1>
-        <p className="text-muted-foreground mt-2">
-          Comprehensive overview of duplicate prevention metrics and system performance.
-        </p>
+      {/* STICKY HEADER & FILTERS (Elite) */}
+      <div className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200 shadow-sm">
+        <div className="max-w-[1700px] mx-auto px-8 h-20 flex items-center justify-between gap-8">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-200">
+              <FileSpreadsheet className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tight">Reporting & Extraction</h1>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Global Audit Baseline</p>
+            </div>
+          </div>
+
+          <div className="flex-grow max-w-5xl flex items-center gap-3 bg-slate-100/50 p-1.5 rounded-2xl border border-slate-200/60">
+            <div className="flex gap-1 bg-white p-1 rounded-xl shadow-inner border">
+              <Input
+                type="date"
+                value={filters.dateRange.from}
+                onChange={(e) => setFilters({ ...filters, dateRange: { ...filters.dateRange, from: e.target.value } })}
+                className="h-8 border-0 bg-transparent text-xs w-[130px] focus-visible:ring-0"
+              />
+              <span className="text-slate-300 self-center">to</span>
+              <Input
+                type="date"
+                value={filters.dateRange.to}
+                onChange={(e) => setFilters({ ...filters, dateRange: { ...filters.dateRange, to: e.target.value } })}
+                className="h-8 border-0 bg-transparent text-xs w-[130px] focus-visible:ring-0"
+              />
+            </div>
+
+            <Select onValueChange={(val) => setFilters({ ...filters, erpType: val })}>
+              <SelectTrigger className="h-10 w-[120px] bg-white border-slate-200 rounded-xl text-xs font-bold"><SelectValue placeholder="ERP" /></SelectTrigger>
+              <SelectContent className="rounded-xl"><SelectItem value="all">All ERPs</SelectItem><SelectItem value="SAP">SAP</SelectItem><SelectItem value="Oracle">Oracle</SelectItem></SelectContent>
+            </Select>
+
+            <div className="relative flex-grow">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <Input
+                placeholder="Search Invoice, Vendor, ID..."
+                className="pl-10 h-10 border-slate-200 rounded-xl bg-white text-xs placeholder:font-medium placeholder:text-slate-300"
+                value={filters.search}
+                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+            <Button variant="outline" size="icon" onClick={() => refetch()} className="rounded-xl h-11 w-11 border-slate-200 hover:bg-white active:scale-95 transition-all"><RefreshCcw className={cn("h-4 w-4 text-slate-500", isFetching && "animate-spin")} /></Button>
+            <Button onClick={handleExport} disabled={isExporting} className="bg-slate-900 hover:bg-black text-white px-6 h-11 rounded-xl font-bold text-xs uppercase tracking-widest transition-all hover:shadow-xl hover:shadow-slate-200 active:scale-95">
+              {isExporting ? <RefreshCcw className="h-4 w-4 mr-2 animate-spin" /> : <ArrowDownToLine className="h-4 w-4 mr-2" />}
+              Extract Data
+            </Button>
+          </div>
+        </div>
       </div>
 
-      <div className="grid md:grid-cols-4 gap-4">
-        {[
-          {
-            label: "Total Prevented",
-            value: new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(kpi.prevented),
-            icon: DollarSign, color: "text-emerald-600", bg: "bg-emerald-50", tooltip: "Direct financial loss avoided by blocking duplicate payments before release."
-          },
-          { label: "Success Rate", value: `${kpi.successRate}%`, icon: ShieldCheck, color: "text-blue-600", bg: "bg-blue-50", tooltip: "Percentage of total invoices correctly processed without error or duplicate release." },
-          { label: "Confidence Avg", value: `${kpi.confidenceAvg}%`, icon: TrendingUp, color: "text-indigo-600", bg: "bg-indigo-50", tooltip: "AI-calculated average confidence level across all detected duplicate groups." },
-          { label: "Detected Risks", value: kpi.detectedRisks, icon: ShieldAlert, color: "text-amber-600", bg: "bg-amber-50", tooltip: "Total number of suspicious patterns flagged by the ML engine for review." },
-        ].map((stat, i) => (
-          <TooltipProvider key={i}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Card className="cursor-help transition-all hover:shadow-md hover:border-primary/20">
-                  <CardContent className="pt-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{stat.label}</p>
-                        <p className="text-2xl font-black mt-1">{stat.value}</p>
-                      </div>
-                      <div className={`h-12 w-12 rounded-xl ${stat.bg} flex items-center justify-center ${stat.color}`}>
-                        <stat.icon className="h-6 w-6" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs font-medium">{stat.tooltip}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ))}
-      </div>
+      <main className="max-w-[1700px] mx-auto px-8 pt-8 space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-start">
-              <div>
-                <CardTitle>Prevention Performance</CardTitle>
-                <CardDescription>Prevented value vs. detected risks (6 months)</CardDescription>
+        {/* RECONCILED KPI STRIP */}
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+          <ReportMetricCard label="Volume" value={summary.totalChecked} sub="Records Audited" icon={Activity} />
+          <ReportMetricCard label="Prevented" value={formatCurrency(summary.prevented?.value)} sub={`${summary.prevented?.count || 0} Blocked`} color="indigo" icon={ShieldAlert} />
+          <ReportMetricCard label="Leakage" value={formatCurrency(summary.leakage?.value)} sub={`${summary.leakage?.count || 0} Detected`} color="rose" icon={Lock} />
+          <ReportMetricCard label="Recovered" value={formatCurrency(summary.recovered?.value)} sub={`${summary.recovered?.count || 0} Cash Back`} color="emerald" icon={TrendingUp} />
+          <ReportMetricCard label="Leakage Rate" value={`${(summary.leakageRate || 0).toFixed(2)}%`} sub="Duplicate %" color="rose" />
+          <ReportMetricCard label="Recovery Eff." value={`${(summary.recoveryEfficiency || 0).toFixed(1)}%`} sub="Collection Strength" color="emerald" />
+        </div>
+
+        {/* MAIN DATA GRID (TanStack Equivalent) */}
+        <Card className="shadow-2xl border-slate-200/60 rounded-[32px] overflow-hidden bg-white">
+          <CardHeader className="p-8 bg-slate-50/50 border-b flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-xl font-black text-slate-900 tracking-tight">Verified Audit Trail</CardTitle>
+              <CardDescription className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
+                Displaying {data?.data?.length || 0} of {data?.pagination?.total?.toLocaleString() || 0} Scope-Match Records
+              </CardDescription>
+            </div>
+            <div className="flex gap-4 items-center">
+              <div className="flex flex-col items-end">
+                <span className="text-[10px] font-black uppercase text-slate-400">Reconciled At</span>
+                <span className="text-[10px] font-bold text-slate-900">{data?.reconciledAt ? format(new Date(data.reconciledAt), 'HH:mm:ss') : 'LIVE'}</span>
               </div>
-              <div className="flex flex-col gap-2 text-[10px] font-bold uppercase tracking-tighter bg-muted/30 p-2 rounded-lg border">
-                <div className="flex items-center gap-2">
-                  <div className="h-2 w-2 rounded-full bg-[#3498db]" />
-                  <span className="text-foreground">Prevented:</span>
-                  <span className="text-muted-foreground font-normal normal-case">Duplicates caught & blocked before payment.</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="h-2 w-2 rounded-full bg-[#e74c3c]" />
-                  <span className="text-foreground">Detected:</span>
-                  <span className="text-muted-foreground font-normal normal-case">Risks identified during post-pay audit.</span>
-                </div>
+              <div className="h-10 w-10 bg-emerald-50 rounded-xl flex items-center justify-center text-emerald-600 border border-emerald-100 shadow-sm">
+                <CheckCircle2 className="h-5 w-5" />
               </div>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyData}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                  <YAxis axisLine={false} tickLine={false} />
-                  <RechartsTooltip
-                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                  />
-                  <Bar dataKey="prevented" fill="#3498db" radius={[4, 4, 0, 0]} name="Prevented ($)" />
-                  <Bar dataKey="detected" fill="#e74c3c" radius={[4, 4, 0, 0]} name="Detected ($)" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader className="bg-slate-50/80 border-b border-slate-100">
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="py-6 pl-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Master Transaction ID</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Entity Context</TableHead>
+                  <TableHead className="text-center text-[10px] font-black uppercase text-slate-500 tracking-widest">Risk Analysis</TableHead>
+                  <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Control Status</TableHead>
+                  <TableHead className="text-right pr-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Gross Impact</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {isLoading ? (
+                  Array(8).fill(0).map((_, i) => (
+                    <TableRow key={i}><TableCell colSpan={5} className="h-16 animate-pulse bg-slate-50/20" /></TableRow>
+                  ))
+                ) : data?.data?.length > 0 ? (
+                  data.data.map((item: any) => (
+                    <TableRow key={item.id} className="group hover:bg-slate-50/80 transition-all border-b border-slate-100/50">
+                      <TableCell className="py-6 pl-8">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-slate-100 rounded-lg text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors">
+                            <FileText className="h-4 w-4" />
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="font-black text-slate-900 group-hover:text-indigo-600 transition-colors uppercase tracking-tight">{item.invoiceNumber}</span>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">{safeFormatDate(item.invoiceDate)}</span>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-black text-slate-800 text-sm">{item.vendorName || 'N/A'}</span>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <Badge variant="outline" className="text-[9px] font-black uppercase tracking-tighter border-slate-200 text-slate-400 px-1.5 h-4">{item.vendorCode || 'V-UNK'}</Badge>
+                            <span className="h-1 w-1 rounded-full bg-slate-200" />
+                            <span className="text-[10px] font-bold text-slate-400">SAP ERP</span>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="inline-flex flex-col items-center">
+                          <div className={cn(
+                            "px-3 py-1 rounded-full font-black text-[10px] mb-1.5 shadow-sm",
+                            item.riskBand === 'HIGH' ? 'bg-rose-50 text-rose-600 ring-1 ring-rose-200' :
+                              item.riskBand === 'MEDIUM' ? 'bg-amber-50 text-amber-600 ring-1 ring-amber-200' :
+                                'bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200'
+                          )}>
+                            {item.riskBand} ({item.riskScore}%)
+                          </div>
+                          <div className="flex gap-1">
+                            {Array(5).fill(0).map((_, i) => (
+                              <div key={i} className={cn("h-1 w-2.5 rounded-full transition-all duration-500", i < Math.ceil(item.riskScore / 20) ? (item.riskScore >= 70 ? 'bg-rose-500' : 'bg-indigo-500') : 'bg-slate-200')} />
+                            ))}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={cn(
+                          "rounded-lg text-[9px] font-black uppercase tracking-widest border-0 px-2 h-6 shadow-sm",
+                          item.status === 'BLOCKED' ? "bg-rose-600 text-white shadow-rose-100" :
+                            item.status === 'CLEARED' ? "bg-indigo-600 text-white shadow-indigo-100" :
+                              item.status === 'PAID' ? "bg-emerald-600 text-white shadow-emerald-100" :
+                                "bg-slate-100 text-slate-500"
+                        )}>
+                          {item.status.replace(/_/g, ' ')}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right pr-8">
+                        <div className="flex flex-col items-end">
+                          <span className="font-black text-slate-900 text-lg tracking-tight">{formatCurrency(Number(item.amount))}</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{item.currency || 'USD'}</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow><TableCell colSpan={5} className="h-96 text-center text-slate-400 font-bold uppercase tracking-widest">No matching signals found.</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Detection Categories</CardTitle>
-            <CardDescription>Distribution of duplicate types</CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center">
-            <div className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={categoryData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {categoryData?.map((entry: any, index: number) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="space-y-3">
-              {categoryData?.map((cat: any) => (
-                <div key={cat.name} className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
-                  <span className="text-xs font-bold whitespace-nowrap">{cat.name}</span>
-                  <span className="text-xs text-muted-foreground ml-auto">{cat.value}%</span>
-                </div>
-              ))}
+            {/* Pagination (Elite) */}
+            <div className="p-8 bg-slate-50/50 flex items-center justify-between border-t border-slate-100">
+              <div className="flex items-center gap-4">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Page <span className="text-slate-900">{pagination.page}</span> of <span className="text-slate-900">{data?.pagination?.pages || 1}</span>
+                </p>
+                <span className="h-4 w-[1px] bg-slate-200" />
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  Total: <span className="text-slate-900">{data?.pagination?.total?.toLocaleString() || 0} Records</span>
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="rounded-2xl border-slate-200 bg-white h-12 px-6 font-black text-xs uppercase text-slate-600 hover:text-indigo-600 hover:border-indigo-200 transition-all shadow-sm active:scale-95 disabled:opacity-30"
+                  disabled={pagination.page <= 1}
+                  onClick={() => setPagination({ ...pagination, page: pagination.page - 1 })}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-2" /> Back
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-2xl border-slate-200 bg-white h-12 px-6 font-black text-xs uppercase text-slate-600 hover:text-indigo-600 hover:border-indigo-200 transition-all shadow-sm active:scale-95 disabled:opacity-30"
+                  disabled={pagination.page >= (data?.pagination?.pages || 1)}
+                  onClick={() => setPagination({ ...pagination, page: pagination.page + 1 })}
+                >
+                  Next <ChevronRight className="h-4 w-4 ml-2" />
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
-      </div>
+      </main>
     </div>
-
   );
 }
+
+function ReportMetricCard({ label, value, sub, icon: Icon, color = "slate" }: any) {
+  const colors: any = {
+    slate: "text-slate-900 bg-white border-slate-200",
+    indigo: "text-indigo-700 bg-indigo-50/50 border-indigo-100",
+    rose: "text-rose-700 bg-rose-50/50 border-rose-100",
+    emerald: "text-emerald-700 bg-emerald-50/50 border-emerald-100"
+  };
+  const accent: any = {
+    slate: "bg-slate-900",
+    indigo: "bg-indigo-600",
+    rose: "bg-rose-600",
+    emerald: "bg-emerald-600"
+  };
+
+  return (
+    <Card className={cn("shadow-sm border-2 rounded-[28px] overflow-hidden group hover:shadow-xl transition-all duration-500", colors[color])}>
+      <CardContent className="p-6 flex flex-col justify-center gap-1 relative">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] font-black uppercase tracking-widest opacity-60 leading-none">{label}</span>
+          <div className={cn("p-1.5 rounded-lg text-white shadow-lg opacity-0 transition-opacity group-hover:opacity-100", accent[color])}>
+            {Icon && <Icon className="h-3 w-3" />}
+          </div>
+        </div>
+        <div className="flex flex-col">
+          <span className="text-xl font-black tracking-tight leading-none mb-1">{value?.toLocaleString() || (typeof value === 'string' ? value : 0)}</span>
+          <span className="text-[9px] font-bold uppercase tracking-widest opacity-40">{sub}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
