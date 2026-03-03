@@ -108,11 +108,14 @@ export async function POST(request: NextRequest) {
 
         // 4. Persistence Layer (Audit-grade)
         const vIds = Array.from(new Set(results.map(r => r.invoice.vendorId || 'UNKNOWN_VENDOR')));
+        const vendorIdMap: Record<string, string> = {};
         for (const vid of vIds) {
             try {
                 const [exists] = await db.select().from(vendors).where(eq(vendors.vendorCode, vid)).limit(1);
-                if (!exists) {
-                    await db.insert(vendors).values({
+                if (exists) {
+                    vendorIdMap[vid] = exists.id;
+                } else {
+                    const [nv] = await db.insert(vendors).values({
                         vendorCode: vid,
                         name: vid === 'UNKNOWN_VENDOR' ? 'Placeholder Vendor' : `Vendor ${vid}`,
                         erpType: 'GENERIC',
@@ -120,20 +123,24 @@ export async function POST(request: NextRequest) {
                         riskLevel: 'low',
                         totalSpend: "0",
                         duplicateCount: 0
-                    }).onConflictDoNothing();
+                    }).onConflictDoNothing().returning({ id: vendors.id });
+                    vendorIdMap[vid] = nv?.id ?? '';
                 }
             } catch (err) {
                 console.error(`Vendor sync failure: ${vid}`, err);
+                vendorIdMap[vid] = '';
             }
         }
 
         const invoiceInserts = results.map(r => {
             const date = r.invoice.invoiceDate instanceof Date ? r.invoice.invoiceDate : new Date();
             const signals = r.detection?.signals?.filter(s => s.triggered).map(s => s.name) || [];
+            const vc = String(r.invoice.vendorId || 'UNKNOWN_VENDOR');
 
             return {
                 invoiceNumber: String(r.invoice.invoiceNumber || 'INV-UNK'),
-                vendorCode: String(r.invoice.vendorId || 'UNKNOWN_VENDOR'),
+                vendorCode: vc,
+                vendorId: vendorIdMap[vc] || '',
                 erpType: 'GENERIC',
                 companyCode: '1000',
                 grossAmount: Number(r.invoice.amount).toFixed(2),
@@ -146,7 +153,7 @@ export async function POST(request: NextRequest) {
                 signals: signals,
                 matchedInvoiceId: r.detection?.matchedInvoice?.id || null,
             };
-        });
+        }).filter(inv => inv.vendorId); // only insert if vendorId was resolved
 
         if (invoiceInserts.length > 0) {
             const inserted = await db.insert(invoices).values(invoiceInserts).returning({
