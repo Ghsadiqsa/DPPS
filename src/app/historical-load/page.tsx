@@ -34,7 +34,8 @@ import {
     AlertCircle,
     Eye,
     DatabaseZap,
-    RefreshCw
+    RefreshCw,
+    Trash2
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -58,6 +59,9 @@ export default function HistoricalLoad() {
     const [batchStatus, setBatchStatus] = useState<string | null>(null);
     const [previewRows, setPreviewRows] = useState<any[]>([]);
     const [previewColumns, setPreviewColumns] = useState<string[]>([]);
+
+    // Batch history selection
+    const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set());
 
     // ────────────────────────────────────────────────────────
     // Catalog Queries
@@ -106,6 +110,45 @@ export default function HistoricalLoad() {
         enabled: activeTab === 'history',
         refetchInterval: activeTab === 'history' ? 5000 : false
     });
+
+    const deleteBatchesMutation = useMutation({
+        mutationFn: async (ids: string[]) => {
+            const res = await fetch('/api/upload/batches', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Failed to delete batches');
+            }
+            return res.json();
+        },
+        onSuccess: (data) => {
+            toast.success(`${data.deletedCount} batch${data.deletedCount !== 1 ? 'es' : ''} deleted`);
+            setSelectedBatches(new Set());
+            queryClient.invalidateQueries({ queryKey: ['upload-batches'] });
+        },
+        onError: (err: any) => {
+            toast.error('Delete failed', { description: err.message });
+        }
+    });
+
+    const toggleSelectBatch = (id: string) => {
+        setSelectedBatches(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedBatches.size === batches.length) {
+            setSelectedBatches(new Set());
+        } else {
+            setSelectedBatches(new Set(batches.map((b: any) => b.id)));
+        }
+    };
 
     // ────────────────────────────────────────────────────────
     // Upload flow
@@ -526,15 +569,47 @@ export default function HistoricalLoad() {
                 <TabsContent value="history">
                     <Card className="border-slate-200 shadow-sm rounded-2xl overflow-hidden">
                         <div className="flex items-center justify-between px-6 py-4 border-b bg-slate-50/50">
-                            <h3 className="font-bold text-slate-800">Upload Batches</h3>
-                            <Button variant="outline" size="sm" onClick={() => refetchBatches()} className="h-9 px-4 rounded-xl">
-                                <RefreshCw className="w-3.5 h-3.5 mr-2" /> Refresh
-                            </Button>
+                            <div className="flex items-center gap-3">
+                                <h3 className="font-bold text-slate-800">Upload Batches</h3>
+                                {selectedBatches.size > 0 && (
+                                    <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full">
+                                        {selectedBatches.size} selected
+                                    </span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-3">
+                                {selectedBatches.size > 0 && (
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() => deleteBatchesMutation.mutate(Array.from(selectedBatches))}
+                                        disabled={deleteBatchesMutation.isPending}
+                                        className="h-9 px-4 rounded-xl font-semibold"
+                                    >
+                                        {deleteBatchesMutation.isPending
+                                            ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                                            : <Trash2 className="w-3.5 h-3.5 mr-2" />
+                                        }
+                                        Delete {selectedBatches.size === 1 ? 'Batch' : `${selectedBatches.size} Batches`}
+                                    </Button>
+                                )}
+                                <Button variant="outline" size="sm" onClick={() => refetchBatches()} className="h-9 px-4 rounded-xl">
+                                    <RefreshCw className="w-3.5 h-3.5 mr-2" /> Refresh
+                                </Button>
+                            </div>
                         </div>
                         <Table>
                             <TableHeader className="bg-slate-50/50">
                                 <TableRow>
-                                    <TableHead className="w-[280px]">Batch ID</TableHead>
+                                    <TableHead className="w-10 pl-4">
+                                        <Checkbox
+                                            checked={batches.length > 0 && selectedBatches.size === batches.length}
+                                            onCheckedChange={toggleSelectAll}
+                                            aria-label="Select all"
+                                            className="border-slate-300"
+                                        />
+                                    </TableHead>
+                                    <TableHead className="w-[240px]">Batch ID</TableHead>
                                     <TableHead>Entity</TableHead>
                                     <TableHead>ERP</TableHead>
                                     <TableHead>Total Rows</TableHead>
@@ -545,12 +620,33 @@ export default function HistoricalLoad() {
                             </TableHeader>
                             <TableBody>
                                 {batches.length === 0 ? (
-                                    <TableRow><TableCell colSpan={7} className="h-48 text-center text-slate-400 italic">No batch history found.</TableCell></TableRow>
+                                    <TableRow>
+                                        <TableCell colSpan={8} className="h-48 text-center text-slate-400 italic">
+                                            No batch history found.
+                                        </TableCell>
+                                    </TableRow>
                                 ) : batches.map((b: any) => (
-                                    <TableRow key={b.id}>
-                                        <TableCell className="font-mono text-xs text-slate-500">{b.id}</TableCell>
+                                    <TableRow
+                                        key={b.id}
+                                        className={cn(
+                                            "hover:bg-slate-50 cursor-pointer",
+                                            selectedBatches.has(b.id) && "bg-indigo-50/60 hover:bg-indigo-50"
+                                        )}
+                                        onClick={() => toggleSelectBatch(b.id)}
+                                    >
+                                        <TableCell className="pl-4" onClick={e => e.stopPropagation()}>
+                                            <Checkbox
+                                                checked={selectedBatches.has(b.id)}
+                                                onCheckedChange={() => toggleSelectBatch(b.id)}
+                                                aria-label={`Select batch ${b.id}`}
+                                                className="border-slate-300"
+                                            />
+                                        </TableCell>
+                                        <TableCell className="font-mono text-xs text-slate-400">{b.id}</TableCell>
                                         <TableCell className="font-semibold">{b.entityType}</TableCell>
-                                        <TableCell><span className="bg-slate-100 px-2 py-0.5 rounded text-xs font-bold">{b.erpType}</span></TableCell>
+                                        <TableCell>
+                                            <span className="bg-slate-100 px-2 py-0.5 rounded text-xs font-bold">{b.erpType}</span>
+                                        </TableCell>
                                         <TableCell className="font-bold">{b.totalRows ?? '—'}</TableCell>
                                         <TableCell className={cn("font-bold", (b.errorRows ?? 0) > 0 ? "text-red-600" : "text-emerald-600")}>
                                             {b.errorRows ?? 0}
