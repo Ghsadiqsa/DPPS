@@ -21,7 +21,7 @@ export async function POST() {
                 iban: 'GB29NWBK60161331926819',
                 swiftBic: 'NWBKGB2L',
                 isActive: true,
-            },
+            } as any,
             {
                 id: VENDOR_B_ID,
                 vendorCode: 'GLOBEX-002',
@@ -33,8 +33,8 @@ export async function POST() {
                 iban: 'GB94BARC10201530093459',
                 swiftBic: 'BARCGB22',
                 isActive: true,
-            },
-        ]).onConflictDoNothing();
+            } as any,
+        ] as any[]).onConflictDoNothing();
 
         // 2. Historical PAID invoices (already processed — the baseline)
         await db.insert(invoices).values([
