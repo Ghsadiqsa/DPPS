@@ -112,7 +112,10 @@ export default function RiskCommandCenterElite() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filters })
       });
-      if (!res.ok) throw new Error("Export failed");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Export failed");
+      }
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -120,8 +123,8 @@ export default function RiskCommandCenterElite() {
       a.download = `DPPS_Audit_${format(new Date(), 'yyyyMMdd')}.xlsx`;
       a.click();
       toast.success("Export Complete", { id: toastId });
-    } catch (err) {
-      toast.error("Export Failed", { id: toastId });
+    } catch (err: any) {
+      toast.error(err.message || "Export Failed", { id: toastId });
     }
   };
 

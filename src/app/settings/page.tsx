@@ -106,8 +106,10 @@ export default function SettingsPage() {
           fuzzyAmountTolerance: String(parseFloat(data.fuzzyAmountTolerance || "0.005") * 100),
         });
       }
+      // If not OK, fall through to finally with DEFAULT_CONFIG still set
     } catch (error) {
       console.error('Failed to fetch config:', error);
+      // Keep DEFAULT_CONFIG — settings page will still render
     } finally {
       setIsLoading(false);
     }

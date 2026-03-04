@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
             .limit(10000); // Audit limit
 
         if (data.length === 0) {
-            return NextResponse.json({ error: "No data found for the selected filters." }, { status: 404 });
+            return NextResponse.json({ error: "No data found for export. Please load historical data first, or adjust your filters." }, { status: 400 });
         }
 
         // 2. Generate XLSX
