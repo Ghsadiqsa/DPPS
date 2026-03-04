@@ -61,47 +61,45 @@ export async function executeTransition({
     reasonCode: string;
     notes?: string;
 }) {
-    return await db.transaction(async (tx) => {
-        // 1. Fetch current Invoice safely
-        const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId));
+    // 1. Fetch current Invoice safely (sequential — Neon HTTP does not support transactions)
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, invoiceId));
 
-        if (!invoice) {
-            throw new Error(`Execution failed: Invoice ${invoiceId} not found.`);
-        }
+    if (!invoice) {
+        throw new Error(`Execution failed: Invoice ${invoiceId} not found.`);
+    }
 
-        const fromState = invoice.lifecycleState as LifecycleState;
+    const fromState = invoice.lifecycleState as LifecycleState;
 
-        // 2. Mathematically enforce transition rules
-        if (!validateTransition(fromState, toState)) {
-            throw new Error(`ILLEGAL STATE TRANSITION: Cannot route Invoice ${invoiceId} from ${fromState} to ${toState}.`);
-        }
+    // 2. Mathematically enforce transition rules
+    if (!validateTransition(fromState, toState)) {
+        throw new Error(`ILLEGAL STATE TRANSITION: Cannot route Invoice ${invoiceId} from ${fromState} to ${toState}.`);
+    }
 
-        // 3. Mutate the core record
-        const [updatedInvoice] = await tx.update(invoices).set({
-            lifecycleState: toState,
-            updatedAt: new Date()
-        }).where(eq(invoices.id, invoiceId)).returning();
+    // 3. Mutate the core record
+    const [updatedInvoice] = await db.update(invoices).set({
+        lifecycleState: toState,
+        updatedAt: new Date()
+    }).where(eq(invoices.id, invoiceId)).returning();
 
-        // 4. Create Immutable Audit Log Sequence (workflow_events)
-        await tx.insert(workflowEvents).values({
-            invoiceId,
-            fromState,
-            toState,
-            actorUserId,
-            reasonCode,
-            notes: notes || null
-        });
-
-        // Optional 5: Routing logic to Recovery Cases if needed
-        if (toState === "RECOVERY") {
-            const { enterpriseRecoveryCases } = await import('@/lib/schema');
-            await tx.insert(enterpriseRecoveryCases).values({
-                invoiceId: invoiceId,
-                status: "OPEN",
-                ownerUserId: actorUserId // defaulting ownership to the initiator for now
-            });
-        }
-
-        return updatedInvoice;
+    // 4. Create Immutable Audit Log Sequence (workflow_events)
+    await db.insert(workflowEvents).values({
+        invoiceId,
+        fromState,
+        toState,
+        actorUserId,
+        reasonCode,
+        notes: notes || null
     });
+
+    // 5. Routing logic to Recovery Cases if needed
+    if (toState === "RECOVERY") {
+        const { enterpriseRecoveryCases } = await import('@/lib/schema');
+        await db.insert(enterpriseRecoveryCases).values({
+            invoiceId: invoiceId,
+            status: "OPEN",
+            ownerUserId: actorUserId
+        });
+    }
+
+    return updatedInvoice;
 }
