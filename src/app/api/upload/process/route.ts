@@ -19,13 +19,32 @@ export async function POST(request: NextRequest) {
         }
 
         // --- Parse file ---
-        const buffer = await file.arrayBuffer();
-        const workbook = xlsx.read(buffer, { type: "array" });
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
+        let rawRows: any[][] = [];
+        const fileName = String(file.name).toLowerCase();
 
-        // Use header:1 to get raw rows, then first row is the header
-        const rawRows = xlsx.utils.sheet_to_json<any[]>(sheet, { header: 1 });
+        if (fileName.endsWith('.json')) {
+            const text = await file.text();
+            try {
+                const jsonObj = JSON.parse(text);
+                const arr = Array.isArray(jsonObj) ? jsonObj : [jsonObj];
+                if (arr.length > 0) {
+                    const headers = Object.keys(arr[0]);
+                    rawRows.push(headers);
+                    arr.forEach(item => {
+                        rawRows.push(headers.map(h => item[h]));
+                    });
+                }
+            } catch (e) {
+                return NextResponse.json({ error: "Invalid JSON format" }, { status: 400 });
+            }
+        } else {
+            const buffer = await file.arrayBuffer();
+            const workbook = xlsx.read(buffer, { type: "array" });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            rawRows = xlsx.utils.sheet_to_json<any[]>(sheet, { header: 1 });
+        }
+
         if (rawRows.length < 2) {
             return NextResponse.json({ error: "File has no data rows (only header or empty)" }, { status: 400 });
         }

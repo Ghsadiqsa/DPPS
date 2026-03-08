@@ -79,10 +79,10 @@ export async function POST() {
         const existing = await db.select().from(dppsConfig).where(eq(dppsConfig.id, CONFIG_ID));
 
         const defaultValues = {
-            criticalThreshold: 85,
-            highThreshold: 70,
-            mediumThreshold: 50,
-            invoicePatternTrigger: 80,
+            criticalThreshold: "0.85",
+            highThreshold: "0.70",
+            mediumThreshold: "0.50",
+            invoicePatternTrigger: "0.80",
             dateProximityDays: 7,
             fuzzyAmountTolerance: "0.005",
             legalEntityScope: "within",

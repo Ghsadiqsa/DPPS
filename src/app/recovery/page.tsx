@@ -76,7 +76,7 @@ export default function Recovery() {
   const { data: recoveryData = [], isLoading } = useQuery({
     queryKey: ["recovery-invoices"],
     queryFn: async () => {
-      const res = await fetch("/api/invoices?status=RECOVERY_REQUIRED&status=RECOVERED");
+      const res = await fetch("/api/invoices?lifecycleState=RECOVERY_OPENED&lifecycleState=RECOVERY_RESOLVED");
       if (!res.ok) throw new Error("Failed to fetch recovery items");
       const json = await res.json();
       return Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
@@ -86,8 +86,8 @@ export default function Recovery() {
   const allRecoveryItems = (Array.isArray(recoveryData) ? recoveryData : []) as RecoveryItem[];
 
   const recoveryItems = allRecoveryItems.filter(item => {
-    if (statusFilter === "pending") return item.status === "RECOVERY_REQUIRED";
-    if (statusFilter === "recovered") return item.status === "RECOVERED";
+    if (statusFilter === "pending") return item.status === "RECOVERY_OPENED";
+    if (statusFilter === "recovered") return item.status === "RECOVERY_RESOLVED";
     return true; // "all"
   });
 
@@ -318,16 +318,16 @@ export default function Recovery() {
                   >
                     <SelectTrigger className={cn(
                       "h-8 w-[150px] text-[10px] font-bold uppercase focus:ring-0 focus:ring-offset-0 tracking-tighter shadow-sm",
-                      item.status === "RECOVERED"
+                      item.status === "RECOVERY_RESOLVED"
                         ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                         : "border-amber-200 bg-amber-50 text-amber-700"
                     )}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="RECOVERY_REQUIRED">RECOVERY PENDING</SelectItem>
-                      <SelectItem value="RECOVERED">Mark Recovered</SelectItem>
-                      <SelectItem value="BLOCKED">Move back to Blocked</SelectItem>
+                      <SelectItem value="RECOVERY_OPENED">RECOVERY PENDING</SelectItem>
+                      <SelectItem value="RECOVERY_RESOLVED">Mark Recovered</SelectItem>
+                      <SelectItem value="CONFIRMED_DUPLICATE">Move back to Blocked</SelectItem>
                     </SelectContent>
                   </Select>
                 </TableCell>

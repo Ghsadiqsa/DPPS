@@ -9,6 +9,18 @@ import {
 } from "@/lib/schema";
 import { eq } from "drizzle-orm";
 
+function getFuzzyValue(row: any, keywords: string[], fallback: string = ""): string {
+    if (!row || typeof row !== 'object') return fallback;
+    const keys = Object.keys(row);
+    for (const key of keys) {
+        const k = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (keywords.some(kw => k.includes(kw))) {
+            return String(row[key]);
+        }
+    }
+    return fallback;
+}
+
 // Helper: Resolve or create a vendor by vendorCode, return its ID
 async function resolveVendorId(vendorCode: string, erpType: string, companyCode: string): Promise<string> {
     const existing = await db.select({ id: vendors.id })
@@ -66,23 +78,20 @@ export async function POST(request: NextRequest) {
             const vendorInserts = stagedRecords
                 .map(record => {
                     const row = record.rowData as any;
-                    const code = String(
-                        row["LIFNR"] || row["AccountNum"] || row["Vendor_Number"] ||
-                        row["Account_Reference"] || row["Vendor ID"] || ""
-                    ).trim();
+                    const code = getFuzzyValue(row, ["lifnr", "accountnum", "vendor", "accountref", "id"], "").trim();
                     if (!code) return null;
                     return {
                         vendorCode: code,
-                        name: String(row["NAME1"] || row["Name"] || row["Vendor_Name"] || row["Vendor Name"] || "Unknown Vendor").trim(),
-                        taxId: String(row["STCD1"] || row["VATNum"] || row["Tax_Registration_Number"] || row["VAT_Number"] || row["Tax ID"] || "").trim(),
-                        companyCode: String(row["BUKRS"] || row["DataAreaId"] || row["Ledger_Id"] || row["Company_Code"] || row["Company Codes"] || "1000").trim(),
-                        iban: String(row["IBAN"] || row["BankAccount"] || row["Bank_Account_Number"] || row["Bank_Account_Name"] || "").trim(),
-                        swiftBic: String(row["SWIFT"] || row["SWIFTNo"] || row["SWIFT/BIC"] || "").trim(),
-                        addressLine1: String(row["STRAS"] || row["Address"] || row["Address_Line_1"] || row["Address Line 1"] || "").trim(),
-                        postalCode: String(row["PSTLZ"] || row["ZipCode"] || row["Postal_Code"] || row["Postal Code"] || "").trim(),
-                        country: String(row["LAND1"] || row["CountryRegionId"] || row["Country"] || "").trim(),
-                        email: String(row["SMTP_ADDR"] || row["Email"] || row["Email_Address"] || "").trim(),
-                        phoneNumber: String(row["TELF1"] || row["Phone"] || row["Phone Number"] || "").trim(),
+                        name: getFuzzyValue(row, ["name", "vendorname", "desc"], "Unknown Vendor").trim(),
+                        taxId: getFuzzyValue(row, ["stcd1", "vatnum", "tax", "vat"], "").trim(),
+                        companyCode: getFuzzyValue(row, ["bukrs", "dataareaid", "ledger", "company", "entity"], "1000").trim(),
+                        iban: getFuzzyValue(row, ["iban", "bankaccount"], "").trim(),
+                        swiftBic: getFuzzyValue(row, ["swift", "bic"], "").trim(),
+                        addressLine1: getFuzzyValue(row, ["stras", "address", "street"], "").trim(),
+                        postalCode: getFuzzyValue(row, ["pstlz", "zip", "postal"], "").trim(),
+                        country: getFuzzyValue(row, ["land1", "country", "region"], "").trim(),
+                        email: getFuzzyValue(row, ["smtp", "email", "mail"], "").trim(),
+                        phoneNumber: getFuzzyValue(row, ["telf1", "phone", "tel"], "").trim(),
                         erpType,
                         riskLevel: "low",
                     };
@@ -102,19 +111,16 @@ export async function POST(request: NextRequest) {
             const customerInserts = stagedRecords
                 .map(record => {
                     const row = record.rowData as any;
-                    const num = String(
-                        row["KUNNR"] || row["AccountNum"] || row["Customer_Number"] ||
-                        row["Account_Reference"] || row["Customer ID"] || ""
-                    ).trim();
+                    const num = getFuzzyValue(row, ["kunnr", "accountnum", "customer", "accountref", "id"], "").trim();
                     if (!num) return null;
                     return {
                         customerNumber: num,
-                        name: String(row["NAME1"] || row["Name"] || row["Customer_Name"] || row["Customer Name"] || "Unknown Customer").trim(),
-                        taxId: String(row["STCD1"] || row["VATNum"] || row["Tax_Reference"] || row["Tax ID"] || "").trim(),
-                        billingAddress: String(row["STRAS"] || row["Address"] || row["Address1"] || row["Billing Address"] || "").trim(),
-                        email: String(row["SMTP_ADDR"] || row["Email"] || row["Email_Address"] || "").trim(),
-                        phone: String(row["TELF1"] || row["Phone"] || "").trim(),
-                        companyCode: String(row["BUKRS"] || row["DataAreaId"] || row["Company Codes"] || "1000").trim(),
+                        name: getFuzzyValue(row, ["name1", "name", "desc"], "Unknown Customer").trim(),
+                        taxId: getFuzzyValue(row, ["stcd1", "vat", "tax"], "").trim(),
+                        billingAddress: getFuzzyValue(row, ["stras", "address", "street"], "").trim(),
+                        email: getFuzzyValue(row, ["smtp", "email", "mail"], "").trim(),
+                        phone: getFuzzyValue(row, ["telf1", "phone", "tel"], "").trim(),
+                        companyCode: getFuzzyValue(row, ["bukrs", "dataarea", "company"], "1000").trim(),
                     };
                 })
                 .filter(Boolean) as any[];
@@ -132,48 +138,31 @@ export async function POST(request: NextRequest) {
             for (const record of stagedRecords) {
                 try {
                     const row = record.rowData as any;
-                    const rawAmt = String(
-                        row["WRBTR"] || row["AmountCur"] || row["Invoice_Amount"] ||
-                        row["Foreign_Gross_Amount"] || row["Amount"] || "0"
-                    ).replace(/[^0-9.-]/g, "");
+                    const rawAmt = getFuzzyValue(row, ["wrbtr", "amount", "gross", "total", "value"], "0").replace(/[^0-9.-]/g, "");
                     const amt = parseFloat(rawAmt) || 0;
 
-                    const vendorCode = String(
-                        row["LIFNR"] || row["AccountNum"] || row["Vendor_Number"] ||
-                        row["Account_Reference"] || row["Entity ID"] || row["Vendor/Customer ID"] || "UNKNOWN"
-                    ).trim();
+                    const vendorCode = getFuzzyValue(row, ["lifnr", "accountnum", "vendor", "entity", "supplier"], "UNKNOWN").trim();
+                    const companyCode = getFuzzyValue(row, ["bukrs", "dataarea", "ledger", "nominal", "company"], "1000").trim();
 
-                    const companyCode = String(
-                        row["BUKRS"] || row["DataAreaId"] || row["Ledger_Id"] ||
-                        row["Nominal_Code"] || row["Company Code"] || "1000"
-                    ).trim();
-
-                    // Resolve vendorId (required FK)
                     const vendorId = await resolveVendorId(vendorCode, erpType, companyCode);
 
-                    const invoiceDate = (() => {
-                        const raw = row["BLDAT"] || row["InvoiceDate"] || row["Invoice_Date"] || row["Date"] || row["Invoice Date"];
-                        if (!raw) return new Date();
-                        if (raw instanceof Date) return raw;
-                        const d = new Date(raw);
-                        return isNaN(d.getTime()) ? new Date() : d;
-                    })();
+                    const invoiceDateStr = getFuzzyValue(row, ["bldat", "invoicedate", "date", "postingdate"], "");
+                    const invoiceDate = invoiceDateStr ? new Date(invoiceDateStr) : new Date();
 
                     await db.insert(invoices).values({
-                        invoiceNumber: String(row["XBLNR"] || row["InvoiceId"] || row["Invoice_Num"] || row["Reference"] || row["Invoice Number"] || "INV-UNKNOWN").trim(),
+                        invoiceNumber: getFuzzyValue(row, ["xblnr", "invoiceid", "reference", "invoicenum", "document"], "INV-UNKNOWN").trim(),
                         vendorCode,
                         vendorId,
                         grossAmount: amt.toFixed(2),
                         amount: amt.toFixed(2),
-                        invoiceDate,
-                        currency: String(row["WAERS"] || row["CurrencyCode"] || row["Invoice_Currency_Code"] || row["Currency"] || "USD").trim(),
+                        invoiceDate: isNaN(invoiceDate.getTime()) ? new Date() : invoiceDate,
+                        currency: getFuzzyValue(row, ["waers", "currencycode", "currency"], "USD").trim(),
                         erpType,
                         companyCode,
-                        poNumber: String(row["EBELN"] || row["PurchId"] || row["Purchase Order Number"] || "").trim(),
+                        poNumber: getFuzzyValue(row, ["ebeln", "purchid", "purchaseorder", "po"], "").trim(),
                         lifecycleState: "PAID",
                         paymentStatus: "PAID",
                         paymentDate: new Date(),
-                        status: "UPLOADED",
                     }).onConflictDoNothing();
                     committedCount++;
                 } catch (err: any) {

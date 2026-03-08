@@ -349,7 +349,7 @@ function DetailsPanel({
             disabled={isTransitioning || !item}
             onClick={async () => {
               if (!item) return;
-              await onTransition(item.id, 'CLEARED', 'Analyst cleared — not a duplicate');
+              await onTransition(item.id, 'NOT_DUPLICATE', 'Analyst cleared — not a duplicate');
               onClose();
             }}
             className="flex-grow h-12 rounded-xl font-bold uppercase tracking-widest text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
@@ -361,7 +361,7 @@ function DetailsPanel({
             disabled={isTransitioning || !item}
             onClick={async () => {
               if (!item) return;
-              await onTransition(item.id, 'BLOCKED', 'Analyst confirmed — confirmed duplicate');
+              await onTransition(item.id, 'CONFIRMED_DUPLICATE', 'Analyst confirmed — confirmed duplicate');
               onClose();
             }}
             className="flex-grow h-12 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold uppercase tracking-widest text-xs"
@@ -414,9 +414,11 @@ export default function AnalystWorkbench() {
     queryKey: ["analyst-workbench", search],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.append('lifecycleState', 'POTENTIAL_DUPLICATE');
+      params.append('lifecycleState', 'IN_INVESTIGATION');
+      params.append('lifecycleState', 'FLAGGED_HIGH');
+      params.append('lifecycleState', 'FLAGGED_MEDIUM');
       if (search) params.append('search', search);
-      const res = await fetch(`/api/invoices?${params.toString()}`);
+      const res = await fetch(`/api/invoices?${params.toString()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error("Failed to fetch workbench data");
       const json = await res.json();
       return Array.isArray(json.data) ? json.data : [];
@@ -436,7 +438,7 @@ export default function AnalystWorkbench() {
         const e = await res.json().catch(() => ({}));
         throw new Error(e.error || "Transition failed");
       }
-      toast.success(targetState === 'CLEARED' ? 'Cleared for payment ✓' : 'Blocked as duplicate ✓', { id: toastId });
+      toast.success(targetState === 'NOT_DUPLICATE' ? 'Cleared for payment ✓' : 'Blocked as duplicate ✓', { id: toastId });
       setSelectedIds([]);
       refetch();
     } catch (err: any) {
@@ -493,11 +495,11 @@ export default function AnalystWorkbench() {
             </Button>
             {selectedIds.length > 0 && (
               <div className="flex gap-2 animate-in slide-in-from-right duration-300">
-                <Button onClick={() => handleTransition(selectedIds, 'BLOCKED', 'Confirmed duplicate in bulk')} disabled={isTransitioning}
+                <Button onClick={() => handleTransition(selectedIds, 'CONFIRMED_DUPLICATE', 'Confirmed duplicate in bulk')} disabled={isTransitioning}
                   className="bg-rose-600 hover:bg-rose-700 text-white rounded-xl px-5 h-11 text-xs font-bold uppercase tracking-widest shadow-lg shadow-rose-200">
                   <XCircle className="h-4 w-4 mr-2" /> Block {selectedIds.length}
                 </Button>
-                <Button onClick={() => handleTransition(selectedIds, 'CLEARED', 'Cleared in bulk')} disabled={isTransitioning}
+                <Button onClick={() => handleTransition(selectedIds, 'NOT_DUPLICATE', 'Cleared in bulk')} disabled={isTransitioning}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-5 h-11 text-xs font-bold uppercase tracking-widest shadow-lg shadow-emerald-200">
                   <CheckCircle2 className="h-4 w-4 mr-2" /> Clear {selectedIds.length}
                 </Button>

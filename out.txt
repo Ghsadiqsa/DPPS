@@ -1,0 +1,17 @@
+C:\DPPS Antigravity\DPPS\src\lib\db.ts:6
+  throw new Error('DATABASE_URL must be set. Get one from neon.tech');
+        ^
+
+Error: DATABASE_URL must be set. Get one from neon.tech
+    at <anonymous> (C:\DPPS Antigravity\DPPS\src\lib\db.ts:6:9)
+    at Object.<anonymous> (C:\DPPS Antigravity\DPPS\src\lib\db.ts:10:42)
+    at Module._compile (node:internal/modules/cjs/loader:1812:14)
+    at Object.transformer (C:\Users\swunn\AppData\Local\npm-cache\_npx\fd45a72a545557e9\node_modules\tsx\dist\register-D46fvsV_.cjs:3:1104)
+    at Module.load (node:internal/modules/cjs/loader:1533:32)
+    at Module._load (node:internal/modules/cjs/loader:1335:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at <anonymous> (C:\DPPS Antigravity\DPPS\src\lib\detection.ts:1:20)
+
+Node.js v24.14.0

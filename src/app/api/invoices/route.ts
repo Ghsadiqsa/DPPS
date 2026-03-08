@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { sql, and, eq, gte, lte, ilike, or } from "drizzle-orm";
+import { sql, and, eq, gte, lte, ilike, or, inArray } from "drizzle-orm";
 import { invoices, vendors } from "@/lib/schema";
 
 export async function GET(request: NextRequest) {
@@ -14,9 +14,13 @@ export async function GET(request: NextRequest) {
         const companyCode = searchParams.get("companyCode");
         const vendorCode = searchParams.get("vendorCode");
         const currency = searchParams.get("currency");
-        const lifecycleState = searchParams.get("lifecycleState");
         const riskBand = searchParams.get("riskBand");
         const search = searchParams.get("search");
+
+        // Support array of statuses 
+        const lifecycleStates = searchParams.getAll("lifecycleState");
+        const statuses = searchParams.getAll("status");
+        const combinedStates = [...new Set([...lifecycleStates, ...statuses])];
 
         // Pagination
         const page = parseInt(searchParams.get("page") || "1");
@@ -29,8 +33,11 @@ export async function GET(request: NextRequest) {
         if (companyCode) filters.push(eq(invoices.companyCode, companyCode));
         if (vendorCode) filters.push(eq(invoices.vendorCode, vendorCode));
         if (currency) filters.push(eq(invoices.currency, currency));
-        if (lifecycleState) filters.push(eq(invoices.lifecycleState, lifecycleState));
         if (riskBand) filters.push(eq(invoices.riskBand, riskBand));
+
+        if (combinedStates.length > 0) {
+            filters.push(inArray(invoices.lifecycleState, combinedStates));
+        }
 
         if (startDate) filters.push(gte(invoices.invoiceDate, new Date(startDate)));
         if (endDate) filters.push(lte(invoices.invoiceDate, new Date(endDate)));

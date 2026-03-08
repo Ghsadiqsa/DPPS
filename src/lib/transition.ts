@@ -3,30 +3,38 @@ import { invoices, workflowEvents, Invoice } from "@/lib/schema";
 import { eq } from "drizzle-orm";
 
 export const LIFECYCLE_STATES = [
-    "PROPOSAL",
+    "INGESTED",
     "RISK_SCORED",
-    "POTENTIAL_DUPLICATE",
-    "BLOCKED",
-    "CLEARED",
+    "FLAGGED_HIGH",
+    "FLAGGED_MEDIUM",
+    "FLAGGED_LOW",
+    "IN_INVESTIGATION",
+    "CONFIRMED_DUPLICATE",
+    "NOT_DUPLICATE",
+    "READY_FOR_RELEASE",
+    "RELEASED_TO_PAYMENT",
     "PAID",
-    "PAID_DUPLICATE",
-    "RECOVERY",
-    "RESOLVED"
+    "RECOVERY_OPENED",
+    "RECOVERY_RESOLVED"
 ] as const;
 
 export type LifecycleState = typeof LIFECYCLE_STATES[number];
 
 // Legal Transitions Map
 export const ALLOWED_TRANSITIONS: Record<LifecycleState, LifecycleState[]> = {
-    PROPOSAL: ["RISK_SCORED"],
-    RISK_SCORED: ["POTENTIAL_DUPLICATE", "CLEARED"],
-    POTENTIAL_DUPLICATE: ["BLOCKED", "CLEARED"],
-    BLOCKED: ["CLEARED", "RESOLVED"],
-    CLEARED: ["PAID"],
-    PAID: ["PAID_DUPLICATE", "RESOLVED"],
-    PAID_DUPLICATE: ["RECOVERY"],
-    RECOVERY: ["RESOLVED"],
-    RESOLVED: []
+    INGESTED: ["RISK_SCORED", "FLAGGED_HIGH", "FLAGGED_MEDIUM", "FLAGGED_LOW", "IN_INVESTIGATION"],
+    RISK_SCORED: ["READY_FOR_RELEASE", "IN_INVESTIGATION"],
+    FLAGGED_HIGH: ["IN_INVESTIGATION"],
+    FLAGGED_MEDIUM: ["IN_INVESTIGATION"],
+    FLAGGED_LOW: ["IN_INVESTIGATION", "READY_FOR_RELEASE"],
+    IN_INVESTIGATION: ["CONFIRMED_DUPLICATE", "NOT_DUPLICATE"],
+    CONFIRMED_DUPLICATE: [],
+    NOT_DUPLICATE: ["READY_FOR_RELEASE"],
+    READY_FOR_RELEASE: ["RELEASED_TO_PAYMENT"],
+    RELEASED_TO_PAYMENT: ["PAID"],
+    PAID: ["RECOVERY_OPENED"],
+    RECOVERY_OPENED: ["RECOVERY_RESOLVED"],
+    RECOVERY_RESOLVED: []
 };
 
 /**
@@ -92,7 +100,7 @@ export async function executeTransition({
     });
 
     // 5. Routing logic to Recovery Cases if needed
-    if (toState === "RECOVERY") {
+    if (toState === "RECOVERY_OPENED") {
         const { enterpriseRecoveryCases } = await import('@/lib/schema');
         await db.insert(enterpriseRecoveryCases).values({
             invoiceId: invoiceId,

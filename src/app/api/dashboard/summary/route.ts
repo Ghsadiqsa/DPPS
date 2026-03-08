@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
         const endDate = searchParams.get("endDate");
         const erpType = searchParams.get("erpType");
         const companyCode = searchParams.get("companyCode");
-        const currency = searchParams.get("currency") || "USD";
+        const currency = searchParams.get("currency"); // do NOT default to USD — proposals may be EUR, GBP etc.
 
         // 2. Build Base Conditions
         const conditions = [];
@@ -25,36 +25,34 @@ export async function GET(request: NextRequest) {
         const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
         // 3. CFO-Grade KPI Aggregations
+        // Active Flags = any invoice that the detection engine has flagged as a potential duplicate
+        // (includes items currently under investigation AND confirmed duplicates)
+        // Verified Savings = invoices cleared as NOT_DUPLICATE (Force Clear) or moved to READY_FOR_RELEASE
         const statsQuery = db.select({
             totalVolume: sql<number>`count(*)`,
             totalValue: sql<number>`sum(gross_amount)`,
 
-            exposureCount: sql<number>`count(*) filter (where lifecycle_state in ('POTENTIAL_DUPLICATE', 'BLOCKED'))`,
-            exposureValue: sql<number>`sum(gross_amount) filter (where lifecycle_state in ('POTENTIAL_DUPLICATE', 'BLOCKED'))`,
+            // Exposure At Risk: all flagged and under-review potential duplicates
+            exposureCount: sql<number>`count(*) filter (where lifecycle_state in ('FLAGGED_HIGH', 'FLAGGED_MEDIUM', 'FLAGGED_LOW', 'IN_INVESTIGATION', 'CONFIRMED_DUPLICATE') OR is_duplicate_candidate = true)`,
+            exposureValue: sql<number>`sum(gross_amount) filter (where lifecycle_state in ('FLAGGED_HIGH', 'FLAGGED_MEDIUM', 'FLAGGED_LOW', 'IN_INVESTIGATION', 'CONFIRMED_DUPLICATE') OR is_duplicate_candidate = true)`,
 
-            preventedCount: sql<number>`count(*) filter (where lifecycle_state = 'BLOCKED')`,
-            preventedValue: sql<number>`sum(gross_amount) filter (where lifecycle_state = 'BLOCKED')`,
+            // Capital Prevented: duplicates that were stopped before payment (confirmed + cleared)
+            preventedCount: sql<number>`count(*) filter (where lifecycle_state in ('CONFIRMED_DUPLICATE', 'NOT_DUPLICATE', 'READY_FOR_RELEASE'))`,
+            preventedValue: sql<number>`sum(gross_amount) filter (where lifecycle_state in ('CONFIRMED_DUPLICATE', 'NOT_DUPLICATE', 'READY_FOR_RELEASE'))`,
 
-            leakageCount: sql<number>`count(*) filter (where lifecycle_state in ('PAID_DUPLICATE', 'RECOVERY'))`,
-            leakageValue: sql<number>`sum(gross_amount) filter (where lifecycle_state in ('PAID_DUPLICATE', 'RECOVERY'))`,
+            leakageCount: sql<number>`count(*) filter (where lifecycle_state in ('RECOVERY_OPENED', 'RECOVERY_RESOLVED'))`,
+            leakageValue: sql<number>`sum(gross_amount) filter (where lifecycle_state in ('RECOVERY_OPENED', 'RECOVERY_RESOLVED'))`,
 
-            recoveredCount: sql<number>`count(*) filter (where lifecycle_state = 'RESOLVED')`,
-            recoveredValue: sql<number>`sum(gross_amount) filter (where lifecycle_state = 'RESOLVED')`,
+            recoveredCount: sql<number>`count(*) filter (where lifecycle_state = 'RECOVERY_RESOLVED')`,
+            recoveredValue: sql<number>`sum(gross_amount) filter (where lifecycle_state = 'RECOVERY_RESOLVED')`,
         })
             .from(invoices)
             .where(whereClause);
 
         const [rawStats] = await statsQuery;
 
-        // 4. Trend Data Generation (Mocked for now but shaped for UI)
-        const trend = [
-            { month: 'Jan', prevented: 45000, leakage: 12000 },
-            { month: 'Feb', prevented: 52000, leakage: 15000 },
-            { month: 'Mar', prevented: 48000, leakage: 10000 },
-            { month: 'Apr', prevented: 61000, leakage: 8000 },
-            { month: 'May', prevented: 55000, leakage: 11000 },
-            { month: 'Jun', prevented: 70000, leakage: 9000 },
-        ];
+        // 4. Trend Data Generation (Cleared for empty application state)
+        const trend: any[] = [];
 
         // 5. Workflow State Funnel (Reconciled)
         const workflowQuery = db.select({

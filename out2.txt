@@ -1,0 +1,8 @@
+[dotenv@17.2.3] injecting env (2) from .env.local -- tip: 🔐 prevent building .env in docker: https://dotenvx.com/prebuild
+Detection Error Stack: Error: Failed query: select "id", "source_type", "proposal_id", "erp_type", "company_code", "vendor_code", "posting_date", "due_date", "currency", "gross_amount", "po_number", "reference_number", "payment_status", "payment_doc", "payment_date", "lifecycle_state", "risk_score", "confidence_score", "risk_band", "is_duplicate_candidate", "confirmed_duplicate", "duplicate_group_id", "updated_at", "invoice_number", "vendor_id", "amount", "invoice_date", "doc_id", "similarity_score", "signals", "investigation_notes", "status_updated_at", "status_updated_by", "created_at", "escalated", "locked", "erp_sync_status" from "invoices" where ("invoices"."source_type" = $1 and "invoices"."company_code" = $2 and (("invoices"."vendor_code" = $3 and "invoices"."invoice_number" = $4) or ("invoices"."vendor_code" = $5 and ABS("invoices"."gross_amount" - $6) <= ($7 * $8)))) limit $9
+params: HISTORICAL,1000,V-UNK,INV-123,V-UNK,100,100,0.005,50
+    at NeonHttpPreparedQuery.queryWithCache (C:\DPPS Antigravity\DPPS\node_modules\src\pg-core\session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async NeonHttpPreparedQuery.execute (C:\DPPS Antigravity\DPPS\node_modules\src\neon-http\session.ts:83:18)
+    at async detectDuplicates (C:\DPPS Antigravity\DPPS\src\lib\detection.ts:80:28)
+    at async run (C:\DPPS Antigravity\DPPS\test_detection.ts:7:25)

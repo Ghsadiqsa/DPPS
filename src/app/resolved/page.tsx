@@ -4,28 +4,42 @@ import * as XLSX from 'xlsx';
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
     Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import {
     Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-    Search, Download, CheckCircle2, XCircle, AlertTriangle, Calendar, Loader2, FileSpreadsheet
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+    Search, Download, CheckCircle2, XCircle, AlertTriangle, Calendar, Loader2,
+    FileSpreadsheet, FileJson, FileCode2, ChevronRight, Building2, Eye
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/currency";
+import { format } from "date-fns";
 
 interface ResolvedInvoice {
     id: string;
     invoiceNumber: string;
     vendorId: string;
+    vendorCode: string;
+    vendorName: string;
+    erpType: string;
+    companyCode: string;
+    grossAmount: string;
     amount: string;
+    currency: string;
     invoiceDate: string;
+    poNumber: string;
     status: string;
     isDuplicate: boolean;
     similarityScore: number;
@@ -35,380 +49,345 @@ interface ResolvedInvoice {
     createdAt: string;
 }
 
-type CategoryFilter = 'all' | 'released' | 'not_duplicate' | 'confirmed_duplicate';
+type CategoryFilter = 'all' | 'ready_for_payment' | 'confirmed_duplicate';
 
 export default function DuplicateResolved() {
     const [search, setSearch] = useState("");
-    const [category, setCategory] = useState<CategoryFilter>("all");
-    const [dateFrom, setDateFrom] = useState("");
-    const [dateTo, setDateTo] = useState("");
+    const [category, setCategory] = useState<CategoryFilter>("ready_for_payment");
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [isExporting, setIsExporting] = useState<string | null>(null);
 
-    // Fetch all resolved invoices (CLEARED, UPLOADED with isDuplicate=false, BLOCKED, RECOVERY_REQUIRED)
+    // Fetch all resolved invoices
     const { data: invoices = [], isLoading } = useQuery<ResolvedInvoice[]>({
         queryKey: ["resolved-invoices"],
         queryFn: async () => {
-            const res = await fetch('/api/invoices?status=CLEARED&status=UPLOADED&status=BLOCKED&status=RECOVERY_REQUIRED&status=PAID_DUPLICATE');
+            const res = await fetch('/api/invoices?lifecycleState=CONFIRMED_DUPLICATE&lifecycleState=NOT_DUPLICATE&lifecycleState=RECOVERY_RESOLVED');
             if (!res.ok) throw new Error("Failed to fetch");
             const json = await res.json();
-            return Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
+            const dataArray = Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
+            // Map lifecycleState to status if status is undefined
+            return dataArray.map((i: any) => ({
+                ...i,
+                status: i.status || i.lifecycleState
+            }));
         }
     });
 
     // Categorize invoices
-    const categorized = useMemo(() => {
-        const list = Array.isArray(invoices) ? invoices : [];
-        const released = list.filter(i => i.status === 'CLEARED');
-        const notDuplicate = list.filter(i => i.status === 'UPLOADED' && !i.isDuplicate);
-        const confirmedDuplicate = list.filter(i =>
-            i.status === 'BLOCKED' || i.status === 'RECOVERY_REQUIRED' || i.status === 'PAID_DUPLICATE'
-        );
-        return { released, notDuplicate, confirmedDuplicate };
-    }, [invoices]);
+    const readyForPayment = useMemo(() => invoices.filter(i => i.status === 'NOT_DUPLICATE'), [invoices]);
+    const confirmedDuplicate = useMemo(() => invoices.filter(i => i.status === 'CONFIRMED_DUPLICATE' || i.status === 'RECOVERY_RESOLVED'), [invoices]);
 
     // Apply filters
     const filteredList = useMemo(() => {
-        let list: ResolvedInvoice[] = [];
+        let list = category === 'ready_for_payment' ? readyForPayment
+            : category === 'confirmed_duplicate' ? confirmedDuplicate
+                : [...readyForPayment, ...confirmedDuplicate];
 
-        switch (category) {
-            case 'released': list = categorized.released; break;
-            case 'not_duplicate': list = categorized.notDuplicate; break;
-            case 'confirmed_duplicate': list = categorized.confirmedDuplicate; break;
-            default: list = [...categorized.released, ...categorized.notDuplicate, ...categorized.confirmedDuplicate];
-        }
-
-        // Date filter
-        if (dateFrom) {
-            const from = new Date(dateFrom);
-            list = list.filter(i => new Date(i.createdAt || i.invoiceDate) >= from);
-        }
-        if (dateTo) {
-            const to = new Date(dateTo);
-            to.setHours(23, 59, 59);
-            list = list.filter(i => new Date(i.createdAt || i.invoiceDate) <= to);
-        }
-
-        // Search filter
         if (search) {
             const q = search.toLowerCase();
             list = list.filter(i =>
                 i.invoiceNumber.toLowerCase().includes(q) ||
-                i.vendorId.toLowerCase().includes(q) ||
-                i.amount.toString().includes(q)
+                (i.vendorName || '').toLowerCase().includes(q) ||
+                (i.vendorCode || '').toLowerCase().includes(q)
             );
         }
-
         return list;
-    }, [category, categorized, dateFrom, dateTo, search]);
+    }, [category, readyForPayment, confirmedDuplicate, search]);
 
     // Select
-    const toggleSelect = (id: string) => {
-        setSelectedIds(prev => {
-            const next = new Set(prev);
-            next.has(id) ? next.delete(id) : next.add(id);
-            return next;
-        });
-    };
+    const toggleSelect = (id: string) => setSelectedIds(prev => {
+        const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+    });
     const toggleSelectAll = () => {
-        if (selectedIds.size === filteredList.length) {
-            setSelectedIds(new Set());
-        } else {
-            setSelectedIds(new Set(filteredList.map(i => i.id)));
-        }
+        if (selectedIds.size === filteredList.length) setSelectedIds(new Set());
+        else setSelectedIds(new Set(filteredList.map(i => i.id)));
     };
 
-    // Export non-duplicates to Excel
-    const handleExportBatch = () => {
-        const exportList = category === 'not_duplicate'
-            ? filteredList
-            : categorized.notDuplicate.filter(i => {
-                if (dateFrom && new Date(i.createdAt || i.invoiceDate) < new Date(dateFrom)) return false;
-                if (dateTo) {
-                    const to = new Date(dateTo); to.setHours(23, 59, 59);
-                    if (new Date(i.createdAt || i.invoiceDate) > to) return false;
-                }
-                return true;
+    // Export API call
+    const generatePaymentLoad = async (formatType: 'excel' | 'xml' | 'json') => {
+        const idsArray = Array.from(selectedIds);
+        if (idsArray.length === 0) return toast.error("Select invoices to export");
+
+        setIsExporting(formatType);
+        const toastId = toast.loading(`Generating ${formatType.toUpperCase()} payment load...`);
+
+        try {
+            const res = await fetch('/api/export/payment', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ invoiceIds: idsArray, format: formatType })
             });
 
-        if (exportList.length === 0) {
-            toast.error("No non-duplicate records to export.");
-            return;
+            if (!res.ok) throw new Error("Export failed");
+
+            // Handle file download
+            if (formatType === 'excel') {
+                const { data, filename } = await res.json();
+                const byteCharacters = atob(data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                downloadBlob(blob, filename);
+            } else {
+                const blob = await res.blob();
+                const filename = res.headers.get('content-disposition')?.split('filename="')[1]?.split('"')[0] || `Payment_Load_${formatType}`;
+                downloadBlob(blob, filename);
+            }
+
+            toast.success("Payment load exported successfully ✓", { id: toastId });
+            setPreviewOpen(false); // Close preview after successful export
+            setSelectedIds(new Set());
+
+        } catch (err: any) {
+            toast.error(err.message || "Failed to generate export file", { id: toastId });
+        } finally {
+            setIsExporting(null);
         }
-
-        const rows = exportList.map(i => ({
-            "Invoice Number": i.invoiceNumber,
-            "Vendor ID": i.vendorId,
-            "Amount": parseFloat(i.amount),
-            "Invoice Date": i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString() : '',
-            "Status": i.status,
-            "Processed Date": i.createdAt ? new Date(i.createdAt).toLocaleDateString() : '',
-        }));
-
-        const ws = XLSX.utils.json_to_sheet(rows);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Non-Duplicate Invoices");
-        XLSX.writeFile(wb, `Non_Duplicate_Batch_${new Date().toISOString().split('T')[0]}.xlsx`);
-        toast.success(`Exported ${rows.length} non-duplicate records to Excel.`);
     };
 
-    // Export selected to Excel
-    const handleExportSelected = () => {
-        const exportList = filteredList.filter(i => selectedIds.has(i.id));
-        if (exportList.length === 0) {
-            toast.error("No records selected for export.");
-            return;
-        }
+    function downloadBlob(blob: Blob, filename: string) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
 
-        const rows = exportList.map(i => ({
-            "Invoice Number": i.invoiceNumber,
-            "Vendor ID": i.vendorId,
-            "Amount": parseFloat(i.amount),
-            "Invoice Date": i.invoiceDate ? new Date(i.invoiceDate).toLocaleDateString() : '',
-            "Status": i.status,
-            "Is Duplicate": i.isDuplicate ? "Yes" : "No",
-            "Similarity Score": i.similarityScore || 0,
-            "Signals": i.signals?.join(', ') || '',
-            "Notes": i.investigationNotes || '',
-            "Processed Date": i.createdAt ? new Date(i.createdAt).toLocaleDateString() : '',
-        }));
-
-        const ws = XLSX.utils.json_to_sheet(rows);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Selected Records");
-        XLSX.writeFile(wb, `Resolved_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
-        toast.success(`Exported ${rows.length} records to Excel.`);
-    };
-
-    const getStatusBadge = (inv: ResolvedInvoice) => {
-        if (inv.status === 'CLEARED') return <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px] font-bold">Released</Badge>;
-        if (inv.status === 'UPLOADED' && !inv.isDuplicate) return <Badge className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-[10px] font-bold">Not Duplicate</Badge>;
-        if (inv.status === 'BLOCKED') return <Badge className="bg-red-500/10 text-red-500 border-red-500/20 text-[10px] font-bold">Confirmed Duplicate</Badge>;
-        if (inv.status === 'RECOVERY_REQUIRED' || inv.status === 'PAID_DUPLICATE') return <Badge className="bg-orange-500/10 text-orange-500 border-orange-500/20 text-[10px] font-bold">Recovery</Badge>;
-        return <Badge variant="outline" className="text-[10px] font-bold">{inv.status}</Badge>;
-    };
-
-    const sumAmounts = (list: ResolvedInvoice[]): number => {
-        return list.reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
-    };
-
-    const formatAmount = (v: string | number) => {
-        const n = typeof v === 'string' ? parseFloat(v) : v;
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n || 0);
-    };
+    const selectedInvoices = useMemo(() => filteredList.filter(i => selectedIds.has(i.id)), [filteredList, selectedIds]);
 
     return (
-        <div className="space-y-6">
-            <div className="flex flex-col gap-1">
-                <h1 className="text-2xl font-bold font-heading text-foreground tracking-tight">Duplicate Resolved</h1>
-                <p className="text-sm text-muted-foreground">
-                    View all resolved invoices — released, confirmed not duplicate, and confirmed duplicates.
-                </p>
-            </div>
-
-            {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setCategory('released')}>
-                    <CardContent className="p-4">
+        <div className="min-h-screen bg-slate-50/50 pb-20">
+            {/* Payment Release Preview Modal */}
+            <Sheet open={previewOpen} onOpenChange={setPreviewOpen}>
+                <SheetContent side="bottom" className="h-[95vh] rounded-t-3xl p-0 flex flex-col bg-slate-50">
+                    <SheetHeader className="px-8 py-6 bg-white border-b border-slate-200 shrink-0">
                         <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Released for Payment</p>
-                                <p className="text-2xl font-black text-emerald-500">{categorized.released.length} <span className="text-sm font-bold text-emerald-400">invoices</span></p>
-                                <p className="text-sm font-black font-mono text-emerald-600 mt-1">{formatAmount(sumAmounts(categorized.released))}</p>
+                            <div className="flex items-center gap-4">
+                                <div className="p-3 bg-emerald-500 rounded-xl shadow-lg shadow-emerald-200">
+                                    <FileSpreadsheet className="h-6 w-6 text-white" />
+                                </div>
+                                <div>
+                                    <SheetTitle className="text-2xl font-black text-slate-900 tracking-tight">Payment Load Preview</SheetTitle>
+                                    <SheetDescription className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">
+                                        Review {selectedInvoices.length} invoices before generating the final ERP export file
+                                    </SheetDescription>
+                                </div>
                             </div>
-                            <CheckCircle2 className="h-8 w-8 text-emerald-500/30" />
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setCategory('not_duplicate')}>
-                    <CardContent className="p-4">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Not Duplicate</p>
-                                <p className="text-2xl font-black text-blue-500">{categorized.notDuplicate.length} <span className="text-sm font-bold text-blue-400">invoices</span></p>
-                                <p className="text-sm font-black font-mono text-blue-600 mt-1">{formatAmount(sumAmounts(categorized.notDuplicate))}</p>
+                            <div className="flex gap-3">
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button className="h-12 px-6 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold tracking-widest text-xs uppercase shadow-xl shadow-slate-200">
+                                            {isExporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />}
+                                            Release for Payment
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-56 p-2 rounded-xl border-slate-200 shadow-xl">
+                                        <DropdownMenuItem onClick={() => generatePaymentLoad('excel')} className="py-3 px-4 font-bold text-xs text-slate-700 cursor-pointer rounded-lg hover:bg-slate-50 focus:bg-slate-50">
+                                            <FileSpreadsheet className="h-4 w-4 mr-2 text-emerald-600" /> Excel Spreadsheet (.xlsx)
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => generatePaymentLoad('xml')} className="py-3 px-4 font-bold text-xs text-slate-700 cursor-pointer rounded-lg hover:bg-slate-50 focus:bg-slate-50">
+                                            <FileCode2 className="h-4 w-4 mr-2 text-indigo-600" /> ERP Structured XML (.xml)
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onClick={() => generatePaymentLoad('json')} className="py-3 px-4 font-bold text-xs text-slate-700 cursor-pointer rounded-lg hover:bg-slate-50 focus:bg-slate-50">
+                                            <FileJson className="h-4 w-4 mr-2 text-amber-600" /> Developer JSON Payload (.json)
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
                             </div>
-                            <XCircle className="h-8 w-8 text-blue-500/30" />
                         </div>
-                    </CardContent>
-                </Card>
+                    </SheetHeader>
 
-                <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setCategory('confirmed_duplicate')}>
-                    <CardContent className="p-4">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Confirmed Duplicates</p>
-                                <p className="text-2xl font-black text-red-500">{categorized.confirmedDuplicate.length} <span className="text-sm font-bold text-red-400">invoices</span></p>
-                                <p className="text-sm font-black font-mono text-red-600 mt-1">{formatAmount(sumAmounts(categorized.confirmedDuplicate))}</p>
-                            </div>
-                            <AlertTriangle className="h-8 w-8 text-red-500/30" />
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* Filters */}
-            <Card>
-                <CardContent className="p-4">
-                    <div className="flex flex-wrap items-center gap-3">
-                        <div className="relative flex-1 min-w-[200px]">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                                placeholder="Search by invoice number, vendor ID, or amount..."
-                                value={search}
-                                onChange={(e) => setSearch(e.target.value)}
-                                className="pl-10 h-9 text-sm"
-                            />
-                        </div>
-
-                        <Select value={category} onValueChange={(v: any) => setCategory(v)}>
-                            <SelectTrigger className="w-[180px] h-9 text-xs font-bold">
-                                <SelectValue placeholder="Category" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Categories</SelectItem>
-                                <SelectItem value="released">Released for Payment</SelectItem>
-                                <SelectItem value="not_duplicate">Not Duplicate</SelectItem>
-                                <SelectItem value="confirmed_duplicate">Confirmed Duplicates</SelectItem>
-                            </SelectContent>
-                        </Select>
-
-                        <div className="flex items-center gap-2">
-                            <Calendar className="h-4 w-4 text-muted-foreground" />
-                            <Input
-                                type="date"
-                                value={dateFrom}
-                                onChange={(e) => setDateFrom(e.target.value)}
-                                className="h-9 w-[140px] text-xs"
-                                placeholder="From"
-                            />
-                            <span className="text-xs text-muted-foreground">to</span>
-                            <Input
-                                type="date"
-                                value={dateTo}
-                                onChange={(e) => setDateTo(e.target.value)}
-                                className="h-9 w-[140px] text-xs"
-                                placeholder="To"
-                            />
-                        </div>
-
-                        <Button variant="outline" size="sm" className="h-9 text-xs font-bold gap-1.5" onClick={handleExportBatch}>
-                            <FileSpreadsheet className="h-3.5 w-3.5" />
-                            Export Non-Duplicates
-                        </Button>
-
-                        {selectedIds.size > 0 && (
-                            <Button variant="default" size="sm" className="h-9 text-xs font-bold gap-1.5" onClick={handleExportSelected}>
-                                <Download className="h-3.5 w-3.5" />
-                                Export Selected ({selectedIds.size})
-                            </Button>
-                        )}
-                    </div>
-                </CardContent>
-            </Card>
-
-            {/* Results Table */}
-            <Card>
-                <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                        <CardTitle className="text-sm font-bold">
-                            {category === 'all' ? 'All Resolved' :
-                                category === 'released' ? 'Released for Payment' :
-                                    category === 'not_duplicate' ? 'Not Duplicate' : 'Confirmed Duplicates'}
-                            <span className="ml-2 text-muted-foreground font-normal">({filteredList.length} records)</span>
-                        </CardTitle>
-                        {category !== 'all' && (
-                            <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => setCategory('all')}>
-                                Show All
-                            </Button>
-                        )}
-                    </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                    {isLoading ? (
-                        <div className="flex items-center justify-center py-16">
-                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                        </div>
-                    ) : filteredList.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                            <CheckCircle2 className="h-10 w-10 mb-3 opacity-30" />
-                            <p className="text-sm font-medium">No resolved records found</p>
-                            <p className="text-xs mt-1">Records will appear here after invoices are processed through the Payment Gate.</p>
-                        </div>
-                    ) : (
-                        <div className="overflow-x-auto">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow className="bg-muted/30">
-                                        <TableHead className="w-[40px]">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedIds.size === filteredList.length && filteredList.length > 0}
-                                                onChange={toggleSelectAll}
-                                                className="rounded border-border"
-                                            />
-                                        </TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider">Invoice #</TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider">Vendor</TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider text-right">Amount</TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider">Invoice Date</TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider">Status</TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider text-center">Score</TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider">Signals</TableHead>
-                                        <TableHead className="text-[10px] font-black uppercase tracking-wider">Processed</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {filteredList.map(inv => (
-                                        <TableRow key={inv.id} className="hover:bg-muted/20">
-                                            <TableCell>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={selectedIds.has(inv.id)}
-                                                    onChange={() => toggleSelect(inv.id)}
-                                                    className="rounded border-border"
-                                                />
-                                            </TableCell>
-                                            <TableCell className="font-mono text-xs font-bold">{inv.invoiceNumber}</TableCell>
-                                            <TableCell className="text-xs">{inv.vendorId}</TableCell>
-                                            <TableCell className="text-xs text-right font-mono font-bold">{formatAmount(inv.amount)}</TableCell>
-                                            <TableCell className="text-xs">
-                                                {inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleDateString() : '—'}
-                                            </TableCell>
-                                            <TableCell>{getStatusBadge(inv)}</TableCell>
-                                            <TableCell className="text-center">
-                                                {inv.similarityScore > 0 ? (
-                                                    <span className={cn("text-xs font-bold px-2 py-0.5 rounded-full",
-                                                        inv.similarityScore >= 85 ? "bg-red-500/10 text-red-500" :
-                                                            inv.similarityScore >= 50 ? "bg-amber-500/10 text-amber-500" :
-                                                                "bg-slate-500/10 text-slate-500"
-                                                    )}>
-                                                        {inv.similarityScore}%
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-xs text-muted-foreground">—</span>
-                                                )}
-                                            </TableCell>
-                                            <TableCell>
-                                                {inv.signals && inv.signals.length > 0 ? (
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {inv.signals.map((s, i) => (
-                                                            <Badge key={i} variant="outline" className="text-[9px] px-1.5 py-0">{s}</Badge>
-                                                        ))}
-                                                    </div>
-                                                ) : <span className="text-xs text-muted-foreground">—</span>}
-                                            </TableCell>
-                                            <TableCell className="text-xs text-muted-foreground">
-                                                {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString() : '—'}
-                                            </TableCell>
-                                        </TableRow>
+                    {/* Excel-style grid */}
+                    <div className="flex-grow p-8 overflow-auto">
+                        <div className="bg-white border text-sm border-slate-300 rounded-xl shadow-sm overflow-hidden">
+                            <table className="w-full">
+                                <thead className="bg-[#f8f9fa] border-b border-slate-300 sticky top-0 z-10 shadow-sm">
+                                    <tr>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">ERP Source</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">Company Code</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">Vendor Code</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">Vendor Name</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">Invoice Number</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">Invoice Date</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-right border-r border-slate-200">Gross Amount</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">Currency</th>
+                                        <th className="font-bold text-[10px] uppercase text-slate-500 tracking-wider py-2.5 px-4 text-left border-r border-slate-200">PO Number</th>
+                                        <th className="font-bold text-[10px] uppercase text-emerald-600 tracking-wider py-2.5 px-4 text-left">DPPS Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {selectedInvoices.map((inv, idx) => (
+                                        <tr key={inv.id} className={cn(
+                                            "border-b border-slate-100 hover:bg-emerald-50/30 transition-colors",
+                                            idx % 2 === 0 ? "bg-white" : "bg-[#fcfdff]"
+                                        )}>
+                                            <td className="px-4 py-2 border-r border-slate-100 text-slate-600 font-medium whitespace-nowrap">
+                                                {inv.erpType?.toUpperCase() === 'GENERIC' ? 'N/A' : inv.erpType}
+                                            </td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-700 whitespace-nowrap">{inv.companyCode}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-700 whitespace-nowrap">{inv.vendorCode}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-900 font-bold whitespace-nowrap truncate max-w-[200px]" title={inv.vendorName}>{inv.vendorName}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-indigo-700 font-bold whitespace-nowrap">{inv.invoiceNumber}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-600 whitespace-nowrap">{inv.invoiceDate ? format(new Date(inv.invoiceDate), 'MM/dd/yyyy') : ''}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-900 font-mono font-bold text-right whitespace-nowrap">{formatCurrency(Number(inv.grossAmount))}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-500 whitespace-nowrap">{inv.currency}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-500 whitespace-nowrap">{inv.poNumber || '-'}</td>
+                                            <td className="px-4 py-2 bg-emerald-50/50 text-emerald-700 font-bold text-[10px] tracking-widest uppercase whitespace-nowrap">NOT DUPLICATE</td>
+                                        </tr>
                                     ))}
-                                </TableBody>
-                            </Table>
+                                </tbody>
+                            </table>
                         </div>
-                    )}
-                </CardContent>
-            </Card>
+                    </div>
+                </SheetContent>
+            </Sheet>
+
+            {/* HEADER */}
+            <div className="bg-white border-b border-slate-200">
+                <div className="max-w-[1700px] mx-auto px-8 h-24 flex items-center justify-between gap-8">
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 bg-indigo-600 rounded-xl shadow-lg shadow-indigo-200">
+                            <CheckCircle2 className="h-6 w-6 text-white" />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-black text-slate-900 tracking-tight">Resolution Center</h1>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Cleared payments & blocked duplicates</p>
+                        </div>
+                    </div>
+                    <div className="flex-grow max-w-2xl relative">
+                        <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                        <Input
+                            placeholder="Quick search cleared or blocked invoices..."
+                            className="pl-10 h-10 border-slate-200 rounded-xl bg-slate-50/50 text-sm focus:bg-white transition-all outline-none ring-0 focus-visible:ring-0 shadow-none focus:border-indigo-400"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                        />
+                    </div>
+                    <div>
+                        {selectedIds.size > 0 && category === 'ready_for_payment' ? (
+                            <Button
+                                onClick={() => setPreviewOpen(true)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl px-6 h-11 text-xs font-bold uppercase tracking-widest shadow-lg shadow-emerald-200 animate-in slide-in-from-right duration-300"
+                            >
+                                <Eye className="h-4 w-4 mr-2" /> Preview Release Batch ({selectedIds.size})
+                            </Button>
+                        ) : (
+                            <div className="h-11 border border-slate-200 rounded-xl bg-slate-50 px-4 flex items-center justify-center text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                                Select items to release
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            <main className="max-w-[1700px] mx-auto px-8 pt-8 space-y-6">
+
+                {/* View Tabs */}
+                <div className="flex gap-2 p-1.5 bg-slate-200/50 rounded-2xl w-fit">
+                    <button
+                        onClick={() => { setCategory('ready_for_payment'); setSelectedIds(new Set()); }}
+                        className={cn(
+                            "px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all",
+                            category === 'ready_for_payment' ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                        )}
+                    >
+                        ✓ (not duplicate: ready for payment) ({readyForPayment.length})
+                    </button>
+                    <button
+                        onClick={() => { setCategory('confirmed_duplicate'); setSelectedIds(new Set()); }}
+                        className={cn(
+                            "px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-widest transition-all",
+                            category === 'confirmed_duplicate' ? "bg-white text-rose-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                        )}
+                    >
+                        ✕ Confirmed Duplicates ({confirmedDuplicate.length})
+                    </button>
+                </div>
+
+                {/* TABLE */}
+                <Card className="shadow-2xl border-slate-200/60 rounded-3xl overflow-hidden bg-white">
+                    <Table>
+                        <TableHeader className="bg-slate-50/80 border-b">
+                            <TableRow className="hover:bg-transparent">
+                                {category === 'ready_for_payment' && (
+                                    <TableHead className="w-[60px] pl-8">
+                                        <Checkbox
+                                            checked={selectedIds.size === filteredList.length && filteredList.length > 0}
+                                            onCheckedChange={toggleSelectAll}
+                                        />
+                                    </TableHead>
+                                )}
+                                <TableHead className={cn("py-5 text-[10px] font-black uppercase text-slate-500 tracking-widest", category !== 'ready_for_payment' && "pl-8")}>Invoice Data</TableHead>
+                                <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Vendor & ERP</TableHead>
+                                <TableHead className="text-right pr-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Status</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {isLoading ? (
+                                Array(5).fill(0).map((_, i) => <TableRow key={i}><TableCell colSpan={4} className="h-20 animate-pulse bg-slate-50/50 border-b" /></TableRow>)
+                            ) : filteredList.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={4} className="h-64 text-center">
+                                        <div className="flex flex-col items-center justify-center gap-3 grayscale opacity-40">
+                                            {category === 'ready_for_payment' ? <CheckCircle2 className="h-12 w-12 text-slate-400" /> : <AlertTriangle className="h-12 w-12 text-slate-400" />}
+                                            <p className="font-black text-xl tracking-tight text-slate-600">No records found</p>
+                                        </div>
+                                    </TableCell>
+                                </TableRow>
+                            ) : filteredList.map((item: any) => (
+                                <TableRow key={item.id} className={cn("group transition-colors border-b border-slate-100", selectedIds.has(item.id) ? "bg-emerald-50/40" : "hover:bg-slate-50/50")}>
+                                    {category === 'ready_for_payment' && (
+                                        <TableCell className="pl-8">
+                                            <Checkbox checked={selectedIds.has(item.id)} onCheckedChange={() => toggleSelect(item.id)} />
+                                        </TableCell>
+                                    )}
+                                    <TableCell className={cn("py-5", category !== 'ready_for_payment' && "pl-8")}>
+                                        <div className="flex items-center gap-3">
+                                            <div>
+                                                <p className="font-black text-slate-900 text-base">{item.invoiceNumber}</p>
+                                                <div className="flex items-center gap-3 mt-1 text-[10px] font-bold">
+                                                    <span className="text-slate-500 flex items-center gap-1"><Calendar className="h-3 w-3" /> {item.invoiceDate ? format(new Date(item.invoiceDate), 'MMM dd, yyyy') : '-'}</span>
+                                                    <span className="text-slate-300">|</span>
+                                                    <span className="font-black text-slate-700 font-mono">{formatCurrency(Number(item.grossAmount))}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell>
+                                        <div className="flex flex-col">
+                                            <span className="font-bold text-slate-800 text-sm">{item.vendorName || `Vendor ${item.vendorCode}`}</span>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase">Code: {item.vendorCode}</span>
+                                                {item.erpType && item.erpType.toUpperCase() !== 'GENERIC' && (
+                                                    <Badge variant="outline" className="text-[9px] font-black text-slate-400 border-slate-200">
+                                                        {item.erpType}
+                                                    </Badge>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </TableCell>
+                                    <TableCell className="text-right pr-8">
+                                        <Badge className={cn("font-black text-[10px] px-3 py-1 uppercase tracking-widest rounded-lg shadow-sm border-0",
+                                            item.status === 'NOT_DUPLICATE' ? "bg-emerald-100 text-emerald-800" :
+                                                item.status === 'CONFIRMED_DUPLICATE' ? "bg-rose-100 text-rose-800" :
+                                                    "bg-slate-100 text-slate-800"
+                                        )}>
+                                            {item.status === 'NOT_DUPLICATE' ? 'NOT DUPLICATE' : item.status}
+                                        </Badge>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </Card>
+            </main>
         </div>
     );
 }

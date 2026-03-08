@@ -12,11 +12,11 @@ import {
   BarChart3,
   Settings,
   ShieldCheck as ShieldIcon,
-  Database,
   Shield,
   BookOpen,
   UploadCloud,
-  CheckCircle2
+  CheckCircle2,
+  Database
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {

@@ -25,9 +25,8 @@ export async function DELETE(request: NextRequest) {
 
         console.log("Deleting batches:", ids);
 
-        // 1. Delete associated staged data and proposals first to satisfy FKs
+        // 1. Delete associated staged data first to satisfy FKs
         await db.delete(historicalStaging).where(inArray(historicalStaging.batchId, ids));
-        await db.delete(paymentProposals).where(inArray(paymentProposals.batchId, ids));
 
         // 2. Delete the batches
         const result = await db.delete(uploadBatches).where(inArray(uploadBatches.id, ids)).returning();

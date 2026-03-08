@@ -1,0 +1,14 @@
+.next/dev/types/validator.ts(197,39): error TS2307: Cannot find module '../../../src/app/api/cases/[id]/action/route.js' or its corresponding type declarations.
+.next/dev/types/validator.ts(206,39): error TS2307: Cannot find module '../../../src/app/api/cases/[id]/activities/route.js' or its corresponding type declarations.
+.next/dev/types/validator.ts(215,39): error TS2307: Cannot find module '../../../src/app/api/cases/[id]/route.js' or its corresponding type declarations.
+.next/dev/types/validator.ts(224,39): error TS2307: Cannot find module '../../../src/app/api/cases/route.js' or its corresponding type declarations.
+.next/dev/types/validator.ts(467,39): error TS2307: Cannot find module '../../../src/app/api/upload/historical/route.js' or its corresponding type declarations.
+.next/dev/types/validator.ts(494,39): error TS2307: Cannot find module '../../../src/app/api/upload/proposal/route.js' or its corresponding type declarations.
+.next/dev/types/validator.ts(503,39): error TS2307: Cannot find module '../../../src/app/api/upload/status/[id]/route.js' or its corresponding type declarations.
+.next/types/validator.ts(197,39): error TS2307: Cannot find module '../../src/app/api/cases/[id]/action/route.js' or its corresponding type declarations.
+.next/types/validator.ts(206,39): error TS2307: Cannot find module '../../src/app/api/cases/[id]/activities/route.js' or its corresponding type declarations.
+.next/types/validator.ts(215,39): error TS2307: Cannot find module '../../src/app/api/cases/[id]/route.js' or its corresponding type declarations.
+.next/types/validator.ts(224,39): error TS2307: Cannot find module '../../src/app/api/cases/route.js' or its corresponding type declarations.
+.next/types/validator.ts(467,39): error TS2307: Cannot find module '../../src/app/api/upload/historical/route.js' or its corresponding type declarations.
+.next/types/validator.ts(494,39): error TS2307: Cannot find module '../../src/app/api/upload/proposal/route.js' or its corresponding type declarations.
+.next/types/validator.ts(503,39): error TS2307: Cannot find module '../../src/app/api/upload/status/[id]/route.js' or its corresponding type declarations.

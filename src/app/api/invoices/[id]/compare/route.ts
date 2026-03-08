@@ -34,7 +34,7 @@ export async function GET(
             paymentStatus: invoices.paymentStatus,
             paymentDate: invoices.paymentDate,
             dueDate: invoices.dueDate,
-            matchedInvoiceId: invoices.matchedInvoiceId,
+
             signals: invoices.signals,
             investigationNotes: invoices.investigationNotes,
             erpSyncStatus: invoices.erpSyncStatus,
@@ -50,39 +50,10 @@ export async function GET(
         }
 
         // 2. Find the matched invoice
-        //    Priority: matchedInvoiceId stored → otherwise find best candidate by same vendor + similar amount
+        //    Find best historical candidate by same vendor + similar amount
         let matched: any = null;
 
-        if (flagged.matchedInvoiceId) {
-            const [m] = await db.select({
-                id: invoices.id,
-                invoiceNumber: invoices.invoiceNumber,
-                invoiceDate: invoices.invoiceDate,
-                grossAmount: invoices.grossAmount,
-                amount: invoices.amount,
-                currency: invoices.currency,
-                vendorCode: invoices.vendorCode,
-                vendorId: invoices.vendorId,
-                vendorName: vendors.name,
-                lifecycleState: invoices.lifecycleState,
-                riskScore: invoices.riskScore,
-                poNumber: invoices.poNumber,
-                erpType: invoices.erpType,
-                companyCode: invoices.companyCode,
-                referenceNumber: invoices.docId,
-                paymentStatus: invoices.paymentStatus,
-                paymentDate: invoices.paymentDate,
-                dueDate: invoices.dueDate,
-            })
-                .from(invoices)
-                .leftJoin(vendors, eq(invoices.vendorId, vendors.id))
-                .where(eq(invoices.id, flagged.matchedInvoiceId))
-                .limit(1);
-            matched = m || null;
-        }
-
-        // Fallback: find best historical match by same vendor + amount within 1% + different ID
-        if (!matched && flagged.vendorId) {
+        if (flagged.vendorId) {
             const amount = parseFloat(String(flagged.grossAmount)) || 0;
             const low = (amount * 0.99).toFixed(2);
             const high = (amount * 1.01).toFixed(2);

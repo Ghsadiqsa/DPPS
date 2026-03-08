@@ -1,0 +1,4 @@
+[dotenv@17.2.3] injecting env (2) from .env.local -- tip: 🗂️ backup and recover secrets: https://dotenvx.com/ops
+Simulation API Error Stack: TypeError: Cannot read properties of undefined (reading 'insert')
+    at run (C:\DPPS Antigravity\DPPS\test_api.ts:21:37)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)

@@ -37,8 +37,7 @@ export async function POST(request: NextRequest) {
                 vendorId: body.vendorId,
                 amount: String(body.amount),
                 invoiceDate: new Date(body.invoiceDate),
-                status: 'held', // Set status to held
-                isDuplicate: true, // Mark as duplicate since we are holding it
+                lifecycleState: 'CONFIRMED_DUPLICATE',
                 // We should also store signals if provided, but schema expects string[] for signals
                 // Body sends object array. Let's skip for now or JSON stringify signals if mapped
             }).returning({ id: invoices.id });

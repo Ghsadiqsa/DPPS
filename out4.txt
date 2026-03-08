@@ -1,0 +1,7 @@
+[dotenv@17.2.3] injecting env (2) from .env.local -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+Proposal inserted: 30eebf14-cbe8-45d2-847a-2f8d26d9b359
+Simulation API Error Stack: Error: Failed query: insert into "payment_proposal_items" ("id", "proposal_id", "vendor_code", "vendor_id", "invoice_number", "amount", "invoice_date", "currency", "value_date", "payee", "bank", "line_status", "match_summary", "created_at") values (default, $1, $2, default, $3, $4, $5, $6, default, default, default, $7, $8, default) on conflict ("proposal_id","invoice_number","vendor_code","amount","invoice_date") do nothing
+params: 30eebf14-cbe8-45d2-847a-2f8d26d9b359,V-UNK,INV-6002,50.25,2026-03-05T00:35:24.661Z,USD,CLEAN,{"candidates":[]}
+    at NeonHttpPreparedQuery.queryWithCache (C:\DPPS Antigravity\DPPS\node_modules\src\pg-core\session.ts:73:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async run (C:\DPPS Antigravity\DPPS\test_api.ts:45:13)

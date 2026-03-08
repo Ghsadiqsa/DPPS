@@ -380,7 +380,7 @@ export default function HistoricalLoad() {
                                         <p className="text-slate-500">Drag and drop your generated CSV file here, or click to browse.</p>
                                         {file && <p className="text-indigo-600 font-bold mt-2">✓ {file.name}</p>}
                                     </div>
-                                    <input type="file" id="file-upload" className="hidden" accept=".csv,.xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                                    <input type="file" id="file-upload" className="hidden" accept=".csv,.xlsx,.xls,.xml,.json" onChange={(e) => setFile(e.target.files?.[0] || null)} />
                                 </div>
 
                                 <Button

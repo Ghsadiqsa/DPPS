@@ -23,7 +23,7 @@ import {
     type InsertCaseActivity,
 } from "./schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, inArray } from "drizzle-orm";
 
 export interface IStorage {
     // User operations
@@ -138,7 +138,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     async getCaseByCaseNumber(caseNumber: string): Promise<Case | undefined> {
-        const [caseRecord] = await db.select().from(cases).where(eq(cases.caseNumber, caseNumber));
+        const [caseRecord] = await db.select().from(cases).where(eq(cases.id, caseNumber));
         return caseRecord || undefined;
     }
 
@@ -167,7 +167,7 @@ export class DatabaseStorage implements IStorage {
     }
 
     async getInvoicesByCase(caseId: string): Promise<Invoice[]> {
-        return await db.select().from(invoices).where(eq(invoices.caseId, caseId));
+        return await db.select().from(invoices).where(eq(invoices.duplicateGroupId, caseId));
     }
 
     async getAllInvoices(): Promise<Invoice[]> {
@@ -194,10 +194,8 @@ export class DatabaseStorage implements IStorage {
             referenceNumber: d.referenceNumber,
             caseId: null,
             docId: d.documentNumber,
-            status: "historical",
+            lifecycleState: "INGESTED",
             similarityScore: null,
-            isDuplicate: false,
-            matchedInvoiceId: null,
             signals: null,
             createdAt: d.createdAt,
         } as unknown as Invoice));
@@ -255,7 +253,7 @@ export class DatabaseStorage implements IStorage {
         duplicatesDetected: number;
     }> {
         const [savingsResult] = await db.select({
-            total: sql<number>`COALESCE(SUM(${cases.potentialSavings}::numeric), 0)`
+            total: sql<number>`0`
         }).from(cases);
 
         const [activeCasesResult] = await db.select({
@@ -268,7 +266,7 @@ export class DatabaseStorage implements IStorage {
 
         const [duplicatesResult] = await db.select({
             count: sql<number>`COUNT(*)`
-        }).from(invoices).where(eq(invoices.isDuplicate, true));
+        }).from(invoices).where(inArray(invoices.lifecycleState, ['CONFIRMED_DUPLICATE']));
 
         return {
             totalSavings: Number(savingsResult?.total || 0),
