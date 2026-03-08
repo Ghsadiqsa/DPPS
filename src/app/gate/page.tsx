@@ -43,6 +43,8 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import * as XLSX from "xlsx";
+
 
 // 1. Types & Constants
 interface ValidationResult {
@@ -193,11 +195,20 @@ export default function PaymentGateElite() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        setValidationResult(parsed.result);
-        setFileName(parsed.fileName);
-      } catch (e) { console.error(e); }
+        // Only load if it has the new structure we expect or we risk crashing
+        if (parsed.result && Array.isArray(parsed.result.duplicates)) {
+          setValidationResult(parsed.result);
+          setFileName(parsed.fileName);
+        } else {
+          localStorage.removeItem(STORAGE_KEY);
+        }
+      } catch (e) {
+        console.error(e);
+        localStorage.removeItem(STORAGE_KEY);
+      }
     }
   }, []);
+
 
   useEffect(() => {
     if (validationResult) {
@@ -220,15 +231,35 @@ export default function PaymentGateElite() {
     }, 200);
 
     try {
-      // Simple CSV parse for the payload
-      const text = await file.text();
-      const rows = text.split('\n').filter(r => r.trim()).map(r => r.split(','));
-      const invoices = rows.slice(1).map(cols => ({
-        invoiceNumber: cols[0]?.trim() || "INV-UNK",
-        vendorId: cols[1]?.trim() || "V-UNK",
-        amount: parseFloat(cols[2]) || 0,
-        invoiceDate: cols[3]?.trim() || new Date().toISOString(),
-      }));
+      let invoices: any[] = [];
+      const extension = file.name.split('.').pop()?.toLowerCase();
+
+      if (extension === 'xlsx' || extension === 'xls') {
+        const data = await file.arrayBuffer();
+        const workbook = XLSX.read(data);
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData: any[] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        // Remove header row and map
+        invoices = jsonData.slice(1)
+          .filter(row => row.length > 0 && row[0]) // Filter empty rows
+          .map(row => ({
+            invoiceNumber: String(row[0] || "").trim() || "INV-UNK",
+            vendorId: String(row[1] || "").trim() || "V-UNK",
+            amount: parseFloat(String(row[2])) || 0,
+            invoiceDate: String(row[3] || "").trim() || new Date().toISOString(),
+          }));
+      } else {
+        // Fallback to CSV parse
+        const text = await file.text();
+        const rows = text.split('\n').filter(r => r.trim()).map(r => r.split(','));
+        invoices = rows.slice(1).map(cols => ({
+          invoiceNumber: cols[0]?.trim() || "INV-UNK",
+          vendorId: cols[1]?.trim() || "V-UNK",
+          amount: parseFloat(cols[2]) || 0,
+          invoiceDate: cols[3]?.trim() || new Date().toISOString(),
+        }));
+      }
 
       const res = await fetch('/api/payment-gate/validate', {
         method: 'POST',
@@ -244,20 +275,59 @@ export default function PaymentGateElite() {
 
       if (!data || data.error) throw new Error(data.error || "Malformed response");
 
+      // Normalize the bundled response into the flatter structure the UI expects
+      const rawDuplicates = [...(data.bundles?.high || []), ...(data.bundles?.medium || [])];
+      const rawApproved = data.bundles?.lowAndClean || [];
+
+      const mapToUI = (item: any, idx: number) => {
+        const bestMatch = item.matchSummary?.candidates?.[0];
+        return {
+          id: item.id || `dup-${idx}-${Date.now()}`,
+          invoiceNumber: item.invoiceNumber,
+          vendorId: item.vendorCode || item.vendorId || "V-UNK",
+          amount: Number(item.amount),
+          invoiceDate: item.invoiceDate,
+          status: item.lineStatus,
+          score: bestMatch?.score || 0,
+          riskLevel: item.lineStatus,
+          signals: Object.keys(bestMatch?.rulesTriggered || {}).map(rule => ({
+            name: rule.replace(/_/g, ' '),
+            score: 10,
+            triggered: true
+          })),
+          matchedWith: bestMatch?.matchedInvoice || null
+        };
+      };
+
+      const normalizedDuplicates = rawDuplicates.map(mapToUI);
+      const normalizedApproved = rawApproved.map(mapToUI);
+
+      const normalizedResult: any = {
+        ...data,
+        duplicates: normalizedDuplicates,
+        approvedForPayment: normalizedApproved,
+        duplicatesDetected: normalizedDuplicates.length,
+        approvedLines: normalizedApproved.length,
+      };
+
+
       clearInterval(progressTimer);
       setUploadProgress(100);
       setTimeout(() => {
         setIsUploading(false);
-        setValidationResult(data);
+        setValidationResult(normalizedResult);
         toast.success("Proposal Analysis Complete", {
           description: `Successfully analyzed ${data.totalLines || 0} records.`
         });
       }, 500);
+
     } catch (err) {
       clearInterval(progressTimer);
       setIsUploading(false);
+      console.error("Upload Error:", err);
       toast.error("Analysis Failed", { description: "The DPPS Engine could not parse this file." });
     }
+
   };
 
   const clearWorkbench = () => {
@@ -274,12 +344,13 @@ export default function PaymentGateElite() {
     if (search) {
       const s = search.toLowerCase();
       list = list.filter(d =>
-        d.invoiceNumber?.toLowerCase().includes(s) ||
-        d.vendorId?.toLowerCase().includes(s)
+        String(d.invoiceNumber || "").toLowerCase().includes(s) ||
+        String(d.vendorId || "").toLowerCase().includes(s)
       );
     }
     return list;
   }, [validationResult, search]);
+
 
   return (
     <div className="min-h-screen bg-slate-50/50 pb-20">
@@ -329,7 +400,7 @@ export default function PaymentGateElite() {
             >
               <Upload className="h-4 w-4 mr-2" /> Upload Flow
             </Button>
-            <input type="file" ref={fileInputRef} className="hidden" onChange={handleUpload} accept=".csv" />
+            <input type="file" ref={fileInputRef} className="hidden" onChange={handleUpload} accept=".csv,.xlsx,.xls" />
           </div>
         </div>
       </div>
@@ -472,7 +543,7 @@ export default function PaymentGateElite() {
 
                               <div className="flex items-center gap-3">
                                 <div className="flex -space-x-2">
-                                  {dup.signals.map((s, idx) => (
+                                  {(dup.signals || []).map((s: any, idx: number) => (
                                     <TooltipProvider key={idx}>
                                       <Tooltip>
                                         <TooltipTrigger asChild>
@@ -485,6 +556,7 @@ export default function PaymentGateElite() {
                                     </TooltipProvider>
                                   ))}
                                 </div>
+
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -557,10 +629,11 @@ export default function PaymentGateElite() {
                     </CardHeader>
                     <CardContent className="p-8 pt-0 space-y-6">
                       <div className="space-y-4">
-                        <DecisionItem icon={Lock} label="Hard Blocked" count={validationResult.duplicates.filter(d => d.score >= 95).length} color="rose" />
-                        <DecisionItem icon={Eye} label="Investigation Required" count={validationResult.duplicates.filter(d => d.score < 95).length} color="amber" />
-                        <DecisionItem icon={CheckCircle2} label="Clean Release" count={validationResult.approvedLines} color="emerald" />
+                        <DecisionItem icon={Lock} label="Hard Blocked" count={(validationResult.duplicates || []).filter(d => d.score >= 95).length} color="rose" />
+                        <DecisionItem icon={Eye} label="Investigation Required" count={(validationResult.duplicates || []).filter(d => d.score < 95).length} color="amber" />
+                        <DecisionItem icon={CheckCircle2} label="Clean Release" count={validationResult.approvedLines || 0} color="emerald" />
                       </div>
+
 
                       <div className="p-6 bg-slate-800 rounded-3xl border border-slate-700/50 space-y-4">
                         <div className="flex justify-between items-center">

@@ -67,7 +67,7 @@ async function main() {
                 invoiceNumber: `INV-${invoiceIdCounter++}`,
                 vendorId: vendor.id,
                 amount: amountValue,
-                grossAmount: amountValue,
+                amount: amountValue,
                 invoiceDate,
                 lifecycleState: scenario.lifecycle as any,
                 status: scenario.lifecycle, // legacy
