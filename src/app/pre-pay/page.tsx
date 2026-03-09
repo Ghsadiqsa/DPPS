@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, convertCurrency } from "@/lib/currency";
+import { useConfig } from "@/components/providers/ConfigProvider";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,14 +53,14 @@ function fmtDate(v: any) {
   try { return format(new Date(v), 'MMM dd, yyyy'); } catch { return String(v); }
 }
 
-function fmtAmount(v: any) {
+function fmtAmount(v: any, currency: string = 'USD') {
   const n = parseFloat(String(v));
-  return isNaN(n) ? (v || '—') : formatCurrency(n);
+  return isNaN(n) ? (v || '—') : formatCurrency(n, currency);
 }
 
-function displayVal(key: string, val: any) {
+function displayVal(key: string, val: any, currency: string = 'USD') {
   if (val === null || val === undefined || val === '') return '—';
-  if (key === 'grossAmount' || key === 'amount') return fmtAmount(val);
+  if (key === 'grossAmount' || key === 'amount') return fmtAmount(val, currency);
   if (key === 'invoiceDate' || key === 'paymentDate' || key === 'dueDate') return fmtDate(val);
   if (key === 'erpType' && String(val).toUpperCase() === 'GENERIC') return 'N/A';
   return String(val);
@@ -125,7 +126,7 @@ function DetailsPanel({
   item: any;
   open: boolean;
   onClose: () => void;
-  onTransition: (id: string, state: string, notes: string) => Promise<void>;
+  onTransition: (ids: string[], state: string, notes: string) => Promise<void>;
   isTransitioning: boolean;
 }) {
   const { data, isLoading, error } = useQuery({
@@ -304,7 +305,7 @@ function DetailsPanel({
                                   row.similarity === 'near' ? 'text-amber-800' :
                                     'text-slate-700'
                               )}>
-                                {displayVal(row.key, row.flaggedVal)}
+                                {displayVal(row.key, row.flaggedVal, (row.key === 'grossAmount' || row.key === 'amount') ? flagged.currency : 'USD')}
                               </span>
                             </div>
                           </td>
@@ -316,7 +317,7 @@ function DetailsPanel({
                                   row.similarity === 'near' ? 'text-amber-800' :
                                     'text-slate-600'
                               )}>
-                                {displayVal(row.key, row.matchedVal)}
+                                {displayVal(row.key, row.matchedVal, (row.key === 'grossAmount' || row.key === 'amount') ? matched.currency : 'USD')}
                               </span>
                             </div>
                           </td>
@@ -349,7 +350,7 @@ function DetailsPanel({
             disabled={isTransitioning || !item}
             onClick={async () => {
               if (!item) return;
-              await onTransition(item.id, 'NOT_DUPLICATE', 'Analyst cleared — not a duplicate');
+              await onTransition([item.id], 'NOT_DUPLICATE', 'Analyst cleared — not a duplicate');
               onClose();
             }}
             className="flex-grow h-12 rounded-xl font-bold uppercase tracking-widest text-xs border-emerald-200 text-emerald-700 hover:bg-emerald-50"
@@ -361,7 +362,7 @@ function DetailsPanel({
             disabled={isTransitioning || !item}
             onClick={async () => {
               if (!item) return;
-              await onTransition(item.id, 'CONFIRMED_DUPLICATE', 'Analyst confirmed — confirmed duplicate');
+              await onTransition([item.id], 'CONFIRMED_DUPLICATE', 'Analyst confirmed — confirmed duplicate');
               onClose();
             }}
             className="flex-grow h-12 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold uppercase tracking-widest text-xs"
@@ -410,7 +411,7 @@ export default function AnalystWorkbench() {
   const [search, setSearch] = useState("");
   const [detailsItem, setDetailsItem] = useState<any>(null);
 
-  const { data: invoices, isLoading, refetch, isFetching } = useQuery<any[]>({
+  const { data: responseData, isLoading, refetch, isFetching } = useQuery<any>({
     queryKey: ["analyst-workbench", search],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -420,10 +421,12 @@ export default function AnalystWorkbench() {
       if (search) params.append('search', search);
       const res = await fetch(`/api/invoices?${params.toString()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error("Failed to fetch workbench data");
-      const json = await res.json();
-      return Array.isArray(json.data) ? json.data : [];
+      return res.json();
     }
   });
+
+  const invoices = responseData?.data || [];
+  const metadata = responseData?.metadata || { reportingCurrency: 'USD', showSideBySideAmounts: false };
 
   const handleTransition = async (ids: string[], targetState: string, notes: string = "Analyst action") => {
     setIsTransitioning(true);
@@ -452,10 +455,10 @@ export default function AnalystWorkbench() {
     await handleTransition([id], state, notes);
   };
 
-  const toggleSelect = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  const toggleSelect = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id]);
   const toggleSelectAll = () => {
     if (selectedIds.length === invoices?.length) setSelectedIds([]);
-    else setSelectedIds(invoices?.map(i => i.id) || []);
+    else setSelectedIds(invoices?.map((i: any) => i.id) || []);
   };
 
   return (
@@ -464,7 +467,7 @@ export default function AnalystWorkbench() {
         item={detailsItem}
         open={!!detailsItem}
         onClose={() => setDetailsItem(null)}
-        onTransition={handleSingleTransition}
+        onTransition={handleTransition}
         isTransitioning={isTransitioning}
       />
 
@@ -528,7 +531,7 @@ export default function AnalystWorkbench() {
               <div>
                 <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Exposure at Risk</p>
                 <p className="text-2xl font-black text-slate-900 mt-1">
-                  {formatCurrency(invoices?.reduce((sum, i) => sum + Number(i.grossAmount), 0) || 0)}
+                  {formatCurrency(invoices?.reduce((sum: number, i: any) => sum + (i.amountInReportingCurrency || convertCurrency(Number(i.grossAmount), i.currency, metadata.reportingCurrency)), 0) || 0, metadata.reportingCurrency)}
                 </p>
               </div>
               <div className="h-10 w-10 bg-rose-50 rounded-lg flex items-center justify-center">
@@ -544,11 +547,14 @@ export default function AnalystWorkbench() {
             <TableHeader className="bg-slate-50/80 border-b">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-[60px] pl-8">
-                  <Checkbox checked={selectedIds.length === invoices?.length && (invoices?.length ?? 0) > 0} onCheckedChange={toggleSelectAll} />
+                  <Checkbox
+                    checked={selectedIds.length > 0 && selectedIds.length === invoices?.length}
+                    onCheckedChange={toggleSelectAll}
+                  />
                 </TableHead>
-                <TableHead className="py-5 text-[10px] font-black uppercase text-slate-500 tracking-widest">Candidate Details</TableHead>
+                <TableHead className="py-5 text-[10px] font-black uppercase text-slate-500 tracking-widest">Group / Primary Invoice</TableHead>
                 <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Vendor Intelligence</TableHead>
-                <TableHead className="text-center text-[10px] font-black uppercase text-slate-500 tracking-widest">Forensics Score</TableHead>
+                <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Forensics Trace</TableHead>
                 <TableHead className="text-right pr-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Quick Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -565,73 +571,140 @@ export default function AnalystWorkbench() {
                     </div>
                   </TableCell>
                 </TableRow>
-              ) : invoices?.map((item: any) => (
-                <TableRow key={item.id} className={cn("group hover:bg-slate-50/50 transition-colors border-b border-slate-100", selectedIds.includes(item.id) && "bg-indigo-50/30")}>
-                  <TableCell className="pl-8">
-                    <Checkbox checked={selectedIds.includes(item.id)} onCheckedChange={() => toggleSelect(item.id)} />
-                  </TableCell>
-                  <TableCell className="py-6">
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="font-black text-slate-900 text-base">{item.invoiceNumber}</span>
-                        <ErpBadge erpType={item.erpType} />
-                      </div>
-                      <div className="flex items-center gap-3 mt-1.5">
-                        <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
-                          <Calendar className="h-3 w-3" />
-                          {item.invoiceDate ? format(new Date(item.invoiceDate), 'MMM dd, yyyy') : '-'}
+              ) : Object.entries(
+                (invoices || []).reduce((acc: any, item: any) => {
+                  const gid = item.duplicateGroupId || `UNGRP-${item.id}`;
+                  if (!acc[gid]) acc[gid] = [];
+                  acc[gid].push(item);
+                  return acc;
+                }, {})
+              ).map(([gid, groupItems]: any) => {
+                const master = groupItems[0];
+                return (
+                  <TableRow key={gid} className={cn("group hover:bg-slate-50/50 transition-colors border-b border-slate-100", groupItems.every((gi: any) => selectedIds.includes(gi.id)) && "bg-indigo-50/30")}>
+                    <TableCell className="pl-8 align-top py-6">
+                      <Checkbox
+                        checked={groupItems.every((gi: any) => selectedIds.includes(gi.id))}
+                        onCheckedChange={() => {
+                          const allSelected = groupItems.every((gi: any) => selectedIds.includes(gi.id));
+                          if (allSelected) {
+                            setSelectedIds(prev => prev.filter(id => !groupItems.some((gi: any) => gi.id === id)));
+                          } else {
+                            const newIds = groupItems.filter((gi: any) => !selectedIds.includes(gi.id)).map((gi: any) => gi.id);
+                            setSelectedIds(prev => [...prev, ...newIds]);
+                          }
+                        }}
+                      />
+                    </TableCell>
+                    <TableCell className="py-6 align-top">
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2">
+                          <span className="font-black text-slate-900 text-base">{master.invoiceNumber}</span>
+                          <ErpBadge erpType={master.erpType} />
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] font-black text-indigo-600">
-                          {formatCurrency(Number(item.grossAmount))}
+                        {groupItems.length > 1 && (
+                          <div className="text-[9px] text-indigo-600 mt-1 font-black uppercase tracking-tighter">
+                            Group ID: {gid} ({groupItems.length} items)
+                          </div>
+                        )}
+                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                          <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
+                            <Calendar className="h-3 w-3" />
+                            {master.invoiceDate ? format(new Date(master.invoiceDate), 'MMM dd, yyyy') : '-'}
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <span className="text-[10px] font-black text-indigo-600">
+                              {formatCurrency(Number(metadata.showSideBySideAmounts ? master.amountInReportingCurrency : master.grossAmount), metadata.reportingCurrency || master.currency || 'USD')}
+                            </span>
+                            {metadata.showSideBySideAmounts && (
+                              <span className="text-[8px] font-bold text-slate-400 uppercase">
+                                Local: {formatCurrency(Number(master.grossAmount), master.currency || 'USD')}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        {groupItems.length > 1 && (
+                          <div className="mt-3 pl-3 border-l-2 border-indigo-100 flex flex-col gap-1.5">
+                            {groupItems.slice(1).map((child: any) => (
+                              <div key={child.id} className="text-[10px] flex gap-2 items-center">
+                                <span className="text-slate-400 font-mono">#{child.invoiceNumber}</span>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-slate-600 font-bold">{formatCurrency(Number(metadata.showSideBySideAmounts ? child.amountInReportingCurrency : child.grossAmount), metadata.reportingCurrency || child.currency || 'USD')}</span>
+                                  {metadata.showSideBySideAmounts && (
+                                    <span className="text-[7px] text-slate-400">({formatCurrency(Number(child.grossAmount), child.currency || 'USD')})</span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span className="font-bold text-slate-800 text-sm flex items-center gap-2">
-                        <Building2 className="h-4 w-4 text-slate-400" />{item.vendorName}
-                      </span>
-                      <span className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Code: {item.vendorCode}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <InvestigationForensics item={item} onOpenDetails={() => setDetailsItem(item)} />
-                  </TableCell>
-                  <TableCell className="text-right pr-8">
-                    <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button size="icon" variant="outline" disabled={isTransitioning}
-                              onClick={() => handleTransition([item.id], 'CLEARED', 'Quick clear')}
-                              className="rounded-xl h-9 w-9 border-emerald-100 text-emerald-600 hover:bg-emerald-50">
-                              <CheckCircle2 className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent className="bg-emerald-600 text-white border-0 text-xs">Clear for Payment</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button size="icon" variant="outline" disabled={isTransitioning}
-                              onClick={() => handleTransition([item.id], 'BLOCKED', 'Quick block')}
-                              className="rounded-xl h-9 w-9 border-rose-100 text-rose-600 hover:bg-rose-50">
-                              <XCircle className="h-4 w-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent className="bg-rose-600 text-white border-0 text-xs">Block as Duplicate</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                      <Button variant="ghost" className="rounded-xl h-9 px-3 text-xs font-bold text-slate-400 hover:text-slate-900 group/btn"
-                        onClick={() => setDetailsItem(item)}>
-                        Details <ChevronRight className="h-4 w-4 ml-1 transition-transform group-hover/btn:translate-x-1" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                    </TableCell>
+                    <TableCell className="align-top py-6">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-slate-800 text-sm flex items-center gap-2">
+                          <Building2 className="h-4 w-4 text-slate-400" />{master.vendorName}
+                        </span>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase mt-0.5">Code: {master.vendorCode}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="align-top py-6">
+                      <div className="flex flex-col items-start max-w-xs">
+                        <div className="flex items-center gap-2 mb-2">
+                          <InvestigationForensics item={master} onOpenDetails={() => setDetailsItem(master)} />
+                          <Badge className={cn(
+                            "border-none text-[8px] font-black uppercase px-2 py-0.5",
+                            master.matchSource === 'Intra-Proposal Duplicate' ? 'bg-indigo-50 text-indigo-600' :
+                              master.matchSource === 'Mixed Match' ? 'bg-rose-50 text-rose-600' : 'bg-amber-50 text-amber-600'
+                          )}>
+                            {master.matchSource || 'External/Pattern'}
+                          </Badge>
+                        </div>
+                        <p className="text-[10px] text-slate-600 font-medium leading-tight">
+                          {master.matchingReason || "Pattern or rules identified potential duplicate behavior."}
+                        </p>
+                        {(master.systemComments || master.investigationNotes) && (
+                          <p className="text-[9px] text-slate-400 mt-1.5 italic line-clamp-3">
+                            {master.systemComments || master.investigationNotes}
+                          </p>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right pr-8 align-top py-6">
+                      <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="icon" variant="outline" disabled={isTransitioning}
+                                onClick={() => handleTransition(groupItems.map((gi: any) => gi.id), 'NOT_DUPLICATE', 'Quick clear ' + groupItems.length + ' items')}
+                                className="rounded-xl h-9 w-9 border-emerald-100 text-emerald-600 hover:bg-emerald-50 shadow-sm">
+                                <CheckCircle2 className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent className="bg-emerald-600 text-white border-0 text-xs">Clear for Payment</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="icon" variant="outline" disabled={isTransitioning}
+                                onClick={() => handleTransition(groupItems.map((gi: any) => gi.id), 'CONFIRMED_DUPLICATE', 'Quick block ' + groupItems.length + ' items')}
+                                className="rounded-xl h-9 w-9 border-rose-100 text-rose-600 hover:bg-rose-50 shadow-sm">
+                                <XCircle className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent className="bg-rose-600 text-white border-0 text-xs">Block as Duplicate</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <Button variant="ghost" className="rounded-xl h-9 px-3 text-xs font-bold text-slate-400 hover:bg-slate-100 hover:text-slate-900 group/btn"
+                          onClick={() => setDetailsItem(master)}>
+                          Details <ChevronRight className="h-4 w-4 ml-1 transition-transform group-hover/btn:translate-x-1" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </Card>

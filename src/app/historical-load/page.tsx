@@ -40,11 +40,14 @@ import {
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format as dateFormat } from "date-fns";
+import { formatCurrency } from "@/lib/currency";
+import { useConfig } from "@/components/providers/ConfigProvider";
 import { cn } from "@/lib/utils";
 
 type UploadStep = 'configure' | 'processing' | 'preview' | 'committed';
 
 export default function HistoricalLoad() {
+    const { reportingCurrency, showSideBySideAmounts } = useConfig();
     const queryClient = useQueryClient();
     const [erpSystem, setErpSystem] = useState("SAP");
     const [dataEntity, setDataEntity] = useState("Vendors");
@@ -88,16 +91,17 @@ export default function HistoricalLoad() {
         enabled: activeTab === 'customers'
     });
 
-    const { data: financialDocs = [] } = useQuery({
+    const { data: financialResponse } = useQuery({
         queryKey: ['invoices', 'historical'],
         queryFn: async () => {
             const res = await fetch('/api/invoices?lifecycleState=PAID&limit=200');
-            if (!res.ok) return [];
-            const json = await res.json();
-            return Array.isArray(json) ? json : (json.data ?? []);
+            if (!res.ok) return { data: [] };
+            return res.json();
         },
         enabled: activeTab === 'financials'
     });
+    const financialDocs = financialResponse?.data || [];
+    const financialMetadata = financialResponse?.metadata || { reportingCurrency: 'USD', showSideBySideAmounts: false };
 
     const { data: batches = [], refetch: refetchBatches } = useQuery({
         queryKey: ['upload-batches'],
@@ -306,7 +310,7 @@ export default function HistoricalLoad() {
                             <CardHeader className="bg-slate-50/50 border-b p-8">
                                 <CardTitle>Batch Upload Configuration</CardTitle>
                                 <CardDescription>
-                                    Select your ERP system and the type of data to upload. Download the strict CSV template before uploading data.
+                                    Select your ERP system and the type of data to upload. Download a sample format, or upload your existing data directly (dynamic fuzzy column mapping is enabled).
                                 </CardDescription>
                             </CardHeader>
                             <CardContent className="p-8 space-y-8">
@@ -350,8 +354,8 @@ export default function HistoricalLoad() {
                                 <Card className="border-slate-200 rounded-2xl p-6">
                                     <div className="flex items-center justify-between">
                                         <div>
-                                            <h3 className="font-bold">Step 1: Download Template</h3>
-                                            <p className="text-sm text-slate-500 mt-1">Download the exact format required for {erpSystem} {dataEntity}.</p>
+                                            <h3 className="font-bold">Step 1: Download Sample Template</h3>
+                                            <p className="text-sm text-slate-500 mt-1">Download a flexible, suggested format for {erpSystem} {dataEntity} (all columns are dynamically mapped).</p>
                                         </div>
                                         <div className="flex items-center gap-4">
                                             <Select value={templateFormat} onValueChange={setTemplateFormat}>
@@ -376,8 +380,8 @@ export default function HistoricalLoad() {
                                         <UploadCloud className="w-8 h-8 text-slate-600" />
                                     </div>
                                     <div>
-                                        <h3 className="font-bold text-lg">Step 2: Upload Populated Template</h3>
-                                        <p className="text-slate-500">Drag and drop your generated CSV file here, or click to browse.</p>
+                                        <h3 className="font-bold text-lg">Step 2: Upload Data File</h3>
+                                        <p className="text-slate-500">Drag and drop your data file here. The engine will auto-detect and map your columns.</p>
                                         {file && <p className="text-indigo-600 font-bold mt-2">✓ {file.name}</p>}
                                     </div>
                                     <input type="file" id="file-upload" className="hidden" accept=".csv,.xlsx,.xls,.xml,.json" onChange={(e) => setFile(e.target.files?.[0] || null)} />
@@ -552,8 +556,19 @@ export default function HistoricalLoad() {
                                     <TableRow><TableCell colSpan={6} className="h-48 text-center text-slate-400 italic">No historical financial documents found.</TableCell></TableRow>
                                 ) : financialDocs.map((f: any) => (
                                     <TableRow key={f.id}>
-                                        <TableCell className="font-bold">{f.invoiceNumber}</TableCell>
-                                        <TableCell className="font-mono">{parseFloat(f.grossAmount).toLocaleString()}</TableCell>
+                                        <TableCell className="font-bold whitespace-nowrap">{f.invoiceNumber}</TableCell>
+                                        <TableCell>
+                                            <div className="flex flex-col">
+                                                <span className="font-mono font-bold">
+                                                    {formatCurrency(Number(financialMetadata.showSideBySideAmounts ? f.amountInReportingCurrency : f.grossAmount), financialMetadata.reportingCurrency || f.currency || 'USD')}
+                                                </span>
+                                                {financialMetadata.showSideBySideAmounts && (
+                                                    <span className="text-[10px] text-slate-400 font-bold uppercase">
+                                                        Local: {formatCurrency(Number(f.grossAmount), f.currency || 'USD')}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </TableCell>
                                         <TableCell>{f.currency}</TableCell>
                                         <TableCell>{f.invoiceDate ? dateFormat(new Date(f.invoiceDate), 'MMM dd, yyyy') : '—'}</TableCell>
                                         <TableCell className="font-mono text-xs">{f.vendorCode}</TableCell>

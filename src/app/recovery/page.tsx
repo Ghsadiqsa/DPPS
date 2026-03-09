@@ -15,6 +15,8 @@ import { Download, Mail, Loader2, Send, History, AlertCircle } from "lucide-reac
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/currency";
+import { useConfig } from "@/components/providers/ConfigProvider";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +44,8 @@ interface RecoveryItem {
   id: string;
   invoiceNumber: string;
   amount: string;
+  currency?: string;
+  amountInReportingCurrency?: number;
   status: string; // From Invoice
   vendor: {
     name: string;
@@ -61,6 +65,7 @@ interface Activity {
 }
 
 export default function Recovery() {
+  const { reportingCurrency, showSideBySideAmounts } = useConfig();
   const [isExporting, setIsExporting] = useState(false);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState("excel");
@@ -73,17 +78,17 @@ export default function Recovery() {
   }, []);
 
   // Fetch recovery items from API
-  const { data: recoveryData = [], isLoading } = useQuery({
+  const { data: recoveryResponse, isLoading } = useQuery({
     queryKey: ["recovery-invoices"],
     queryFn: async () => {
       const res = await fetch("/api/invoices?lifecycleState=RECOVERY_OPENED&lifecycleState=RECOVERY_RESOLVED");
       if (!res.ok) throw new Error("Failed to fetch recovery items");
-      const json = await res.json();
-      return Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
+      return res.json();
     }
   });
 
-  const allRecoveryItems = (Array.isArray(recoveryData) ? recoveryData : []) as RecoveryItem[];
+  const allRecoveryItems = (recoveryResponse?.data || []) as RecoveryItem[];
+  const metadata = recoveryResponse?.metadata || { reportingCurrency: 'USD', showSideBySideAmounts: false };
 
   const recoveryItems = allRecoveryItems.filter(item => {
     if (statusFilter === "pending") return item.status === "RECOVERY_OPENED";
@@ -307,8 +312,17 @@ export default function Recovery() {
               <TableRow key={item.id}>
                 <TableCell className="font-mono text-xs font-bold">{item.id.substring(0, 8)}</TableCell>
                 <TableCell className="font-semibold text-sm">{item.vendor?.name || "Unknown Vendor"}</TableCell>
-                <TableCell className="font-mono font-bold text-red-600">
-                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(item.amount) || 0)}
+                <TableCell>
+                  <div className="flex flex-col">
+                    <span className="font-mono font-bold text-red-600">
+                      {formatCurrency(Number(metadata.showSideBySideAmounts ? item.amountInReportingCurrency : item.amount), metadata.reportingCurrency || item.currency || 'USD')}
+                    </span>
+                    {metadata.showSideBySideAmounts && (
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">
+                        Local: {formatCurrency(Number(item.amount), item.currency || 'USD')}
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>{mounted && item.statusUpdatedAt ? new Date(item.statusUpdatedAt).toLocaleDateString() : '---'}</TableCell>
                 <TableCell>
@@ -455,7 +469,7 @@ function EmailForm({ item }: { item: RecoveryItem }) {
           <Label className="text-xs font-bold uppercase">Message</Label>
           <Textarea
             className="h-32 text-sm"
-            defaultValue={`Dear ${item.vendor?.name || 'Vendor'} Team,\n\nWe have identified a potential duplicate payment of ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(item.amount))} (Case ID: ${item.id}).\n\nPlease review your records and confirm if a credit memo can be issued.\n\nBest regards,\nAccounts Payable Team`}
+            defaultValue={`Dear ${item.vendor?.name || 'Vendor'} Team,\n\nWe have identified a potential duplicate payment of ${formatCurrency(Number(item.amount), item.currency || 'USD')} (Case ID: ${item.id}).\n\nPlease review your records and confirm if a credit memo can be issued.\n\nBest regards,\nAccounts Payable Team`}
           />
         </div>
       </div>

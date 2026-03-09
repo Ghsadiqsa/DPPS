@@ -22,6 +22,8 @@ export async function GET() {
                 dateProximityDays: DEFAULT_CONFIG.dateProximityDays,
                 fuzzyAmountTolerance: (DEFAULT_CONFIG.fuzzyAmountTolerance * 100).toFixed(1),
                 legalEntityScope: DEFAULT_CONFIG.legalEntityScope,
+                reportingCurrency: DEFAULT_CONFIG.reportingCurrency,
+                showSideBySideAmounts: DEFAULT_CONFIG.showSideBySideAmounts,
             });
         }
 
@@ -86,6 +88,8 @@ export async function POST() {
             dateProximityDays: 7,
             fuzzyAmountTolerance: "0.005",
             legalEntityScope: "within",
+            reportingCurrency: "USD",
+            showSideBySideAmounts: false,
             updatedAt: new Date(),
         };
 

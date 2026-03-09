@@ -70,6 +70,11 @@ interface DashboardSummary {
   workflow: any[];
   trend: any[];
   riskConcentration: any[];
+  metadata: {
+    reportingCurrency: string;
+    showSideBySideAmounts: boolean;
+    reconciledAt: string;
+  };
 }
 
 export default function RiskCommandCenterElite() {
@@ -218,7 +223,7 @@ export default function RiskCommandCenterElite() {
               <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
                 Financial Control Tower
               </h1>
-              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">Monitoring {score.totalCheckedCount.toLocaleString()} signals totalling {formatCurrency(score.totalCheckedValue)}</p>
+              <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">Monitoring {score.totalCheckedCount.toLocaleString()} signals totalling {formatCurrency(score.totalCheckedValue, cc?.metadata?.reportingCurrency)}</p>
             </div>
             <div className="flex gap-2">
               <Button variant="ghost" className="h-10 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-indigo-600 rounded-xl px-4">Performance Audit</Button>
@@ -230,7 +235,7 @@ export default function RiskCommandCenterElite() {
             <MetricHeroCard
               title="Exposure At Risk"
               label="Potential Duplicates"
-              value={formatCurrency(hero.exposureAtRisk.value)}
+              value={formatCurrency(hero.exposureAtRisk.value, cc?.metadata?.reportingCurrency)}
               subValue={`${hero.exposureAtRisk.count} active flags`}
               variant="amber"
               icon={<AlertTriangle className="h-5 w-5" />}
@@ -240,7 +245,7 @@ export default function RiskCommandCenterElite() {
             <MetricHeroCard
               title="Capital Prevented"
               label="Blocked Pre-Payment"
-              value={formatCurrency(hero.prevented.value)}
+              value={formatCurrency(hero.prevented.value, cc?.metadata?.reportingCurrency)}
               subValue={`${hero.prevented.count} verified savings`}
               variant="indigo"
               icon={<ShieldCheck className="h-5 w-5" />}
@@ -250,7 +255,7 @@ export default function RiskCommandCenterElite() {
             <MetricHeroCard
               title="Leakage Detected"
               label="Post-Payment Detection"
-              value={formatCurrency(hero.leakage.value)}
+              value={formatCurrency(hero.leakage.value, cc?.metadata?.reportingCurrency)}
               subValue={`${score.leakageRate.toFixed(2)}% Leakage Rate`}
               variant="rose"
               icon={<Lock className="h-5 w-5" />}
@@ -260,7 +265,7 @@ export default function RiskCommandCenterElite() {
             <MetricHeroCard
               title="Net Protected Impact"
               label="Prevented + Recovered"
-              value={formatCurrency(hero.netProtectedImpact.value)}
+              value={formatCurrency(hero.netProtectedImpact.value, cc?.metadata?.reportingCurrency)}
               subValue="Cumulative Savings"
               variant="emerald"
               icon={<TrendingUp className="h-5 w-5" />}
@@ -297,11 +302,11 @@ export default function RiskCommandCenterElite() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 700 }} dy={15} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 700 }} tickFormatter={(v) => `$${v / 1000}k`} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 10, fontWeight: 700 }} tickFormatter={(v) => `${cc?.metadata?.reportingCurrency === 'GHS' || cc?.metadata?.reportingCurrency === 'NGN' ? '' : '$'}${v / 1000}k`} />
                   <RechartsTooltip
                     contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.15)', padding: '16px' }}
                     itemStyle={{ fontSize: '12px', fontWeight: 800, textTransform: 'uppercase' }}
-                    formatter={(v: any) => formatCurrency(Number(v))}
+                    formatter={(v: any) => formatCurrency(Number(v), cc?.metadata?.reportingCurrency)}
                   />
                   <Area type="monotone" dataKey="prevented" stroke="#6366f1" strokeWidth={4} fillOpacity={1} fill="url(#colorPrevented)" />
                   <Area type="monotone" dataKey="leakage" stroke="#f43f5e" strokeWidth={4} fillOpacity={1} fill="url(#colorLeakage)" />
@@ -385,7 +390,7 @@ export default function RiskCommandCenterElite() {
                       </TableCell>
                       <TableCell className="text-right text-slate-400 font-bold text-xs">{w.count.toLocaleString()}</TableCell>
                       <TableCell className="text-right pr-8">
-                        <span className="font-black text-slate-900 text-base tabular-nums">{formatCurrency(Number(w.value))}</span>
+                        <span className="font-black text-slate-900 text-base tabular-nums">{formatCurrency(Number(w.value), cc?.metadata?.reportingCurrency)}</span>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -431,7 +436,7 @@ export default function RiskCommandCenterElite() {
                         )}>{v.risk_band}</Badge>
                       </TableCell>
                       <TableCell className="text-right pr-8">
-                        <span className="font-black text-slate-900 text-base tabular-nums">{formatCurrency(Number(v.total_value))}</span>
+                        <span className="font-black text-slate-900 text-base tabular-nums">{formatCurrency(Number(v.total_value), cc?.metadata?.reportingCurrency)}</span>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -461,6 +466,7 @@ export default function RiskCommandCenterElite() {
           <div className="flex-grow overflow-auto p-8">
             <DrilldownWorkbench
               initialFilters={{ [drilldown.filterKey!]: drilldown.filterValue, ...filters }}
+              reportingCurrency={cc?.metadata?.reportingCurrency}
             />
           </div>
         </SheetContent>
@@ -553,7 +559,7 @@ const getStateColor = (state: string) => {
 }
 
 // --- DRILLDOWN WORKBENCH COMPONENT ---
-function DrilldownWorkbench({ initialFilters }: { initialFilters: any }) {
+function DrilldownWorkbench({ initialFilters, reportingCurrency }: { initialFilters: any, reportingCurrency?: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ['drilldown-elite', initialFilters],
     queryFn: async () => {
@@ -611,7 +617,19 @@ function DrilldownWorkbench({ initialFilters }: { initialFilters: any }) {
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{safeFormatDate(inv.invoiceDate)}</p>
               </TableCell>
               <TableCell className="text-right pr-8">
-                <span className="font-black text-slate-900 text-lg tabular-nums tracking-tighter">{formatCurrency(Number(inv.grossAmount))}</span>
+                <div className="flex flex-col items-end">
+                  <span className="font-black text-slate-900 text-lg tabular-nums tracking-tighter">
+                    {formatCurrency(Number(data?.metadata?.showSideBySideAmounts ? inv.amountInReportingCurrency : inv.grossAmount), data?.metadata?.reportingCurrency || inv.currency || 'USD')}
+                  </span>
+                  {data?.metadata?.showSideBySideAmounts && (
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                      Original: {formatCurrency(Number(inv.grossAmount), inv.currency || 'USD')}
+                    </span>
+                  )}
+                  {!data?.metadata?.showSideBySideAmounts && (
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{inv.currency || 'USD'}</span>
+                  )}
+                </div>
               </TableCell>
             </TableRow>
           ))}

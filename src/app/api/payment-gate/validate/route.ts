@@ -1,11 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { paymentProposals, paymentProposalItems } from "@/lib/schema";
-import { sql } from "drizzle-orm";
+import { paymentProposals, paymentProposalItems, dppsConfig } from "@/lib/schema";
+import { sql, eq } from "drizzle-orm";
 import { detectDuplicates, DetectionItem } from "@/lib/detection";
+import { convertCurrency } from "@/lib/currency";
 
 export async function POST(request: NextRequest) {
     try {
+        // Fetch Config for currency preferences (Safely)
+        let reportingCurrency = 'USD';
+        let showSideBySide = false;
+        try {
+            const [config] = await db.select().from(dppsConfig).where(eq(dppsConfig.id, 'default'));
+            if (config) {
+                reportingCurrency = (config as any).reportingCurrency || 'USD';
+                showSideBySide = (config as any).showSideBySideAmounts || false;
+            }
+        } catch (e) {
+            console.warn("API Gate: Database column mismatch - defaulting to USD.");
+        }
+
         const { invoices = [] } = await request.json();
 
         if (!Array.isArray(invoices) || invoices.length === 0) {
@@ -47,7 +61,11 @@ export async function POST(request: NextRequest) {
             invoiceDate: new Date(item.invoiceDate),
             currency: item.currency,
             lineStatus: item.lineStatus,
-            matchSummary: item.matchSummary
+            matchSummary: item.matchSummary,
+            groupId: (item as any).groupId,
+            matchSource: (item as any).matchSource,
+            matchingReason: (item as any).matchingReason,
+            systemComments: (item as any).systemComments
         }));
 
         // Insert items preserving ALL rows including intra-proposal duplicates
@@ -69,14 +87,23 @@ export async function POST(request: NextRequest) {
         const bundleMedium = enrichedItems.filter(i => i.lineStatus === 'FLAGGED_MEDIUM');
         const bundleLow = enrichedItems.filter(i => ['FLAGGED_LOW', 'CLEAN'].includes(i.lineStatus));
 
+        const transform = (items: any[]) => items.map(item => ({
+            ...item,
+            amountInReportingCurrency: convertCurrency(Number(item.amount), item.currency || 'USD', reportingCurrency)
+        }));
+
         return NextResponse.json({
             success: true,
             proposalId,
             totalLines: enrichedItems.length,
             bundles: {
-                high: bundleHigh,
-                medium: bundleMedium,
-                lowAndClean: bundleLow,
+                high: transform(bundleHigh),
+                medium: transform(bundleMedium),
+                lowAndClean: transform(bundleLow),
+            },
+            metadata: {
+                reportingCurrency,
+                showSideBySideAmounts: showSideBySide
             }
         });
 

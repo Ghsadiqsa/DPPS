@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { invoices, dppsConfig } from "@/lib/schema";
-import { eq, and, or, sql } from "drizzle-orm";
+import { eq, and, or, sql, inArray } from "drizzle-orm";
 
 export interface DetectionItem {
     vendorId?: string | null;
@@ -24,6 +24,11 @@ export interface MatchCandidate {
 export interface DetectionResult extends DetectionItem {
     lineStatus: 'CLEAN' | 'FLAGGED_LOW' | 'FLAGGED_MEDIUM' | 'FLAGGED_HIGH';
     matchSummary: { candidates: MatchCandidate[] };
+    groupId?: string | null;
+    matchSource?: 'Intra-Proposal Duplicate' | 'Historical Data Match' | 'Mixed Match' | null;
+    matchingReason?: string | null;
+    systemComments?: string | null;
+    matchedInvoiceCount?: number;
 }
 
 export async function detectDuplicates(items: DetectionItem[]): Promise<DetectionResult[]> {
@@ -32,7 +37,6 @@ export async function detectDuplicates(items: DetectionItem[]): Promise<Detectio
     // Fetch engine configurations
     let [config] = await db.select().from(dppsConfig).limit(1);
 
-    // Fallback if the database has not been seeded yet to prevent 500 error crashes
     if (!config) {
         config = {
             criticalThreshold: "0.85",
@@ -44,24 +48,21 @@ export async function detectDuplicates(items: DetectionItem[]): Promise<Detectio
         } as any;
     }
 
-    // Define metric boundaries in percentage form (0–100).
-    // DB config may store as fractions (0.85) or percentages (85) — normalize to 0-100.
     const normalize = (v: number) => v <= 1 ? v * 100 : v;
-    const exactThreshold = 100; // Always 100% for exact match
-    const criticalThreshold = normalize(config.criticalThreshold ? Number(config.criticalThreshold) : 0.85);
     const highThreshold = normalize(config.highThreshold ? Number(config.highThreshold) : 0.70);
     const mediumThreshold = normalize(config.mediumThreshold ? Number(config.mediumThreshold) : 0.50);
-    const rulesTriggerBase = normalize(config.invoicePatternTrigger ? Number(config.invoicePatternTrigger) : 0.80);
     const amountTolerance = config.fuzzyAmountTolerance ? Number(config.fuzzyAmountTolerance) : 0.005;
     const proximityDays = config.dateProximityDays || 7;
 
-    const results: DetectionResult[] = [];
+    const preliminaryResults: DetectionResult[] = [];
+
+    // Graph for clustering (nodes are indices of `items`)
+    const adj: Map<number, Set<number>> = new Map();
 
     for (let i = 0; i < items.length; i++) {
         const item = items[i];
-        // Basic validation
         if (!item.invoiceNumber || !item.vendorCode || item.amount == null) {
-            results.push({
+            preliminaryResults.push({
                 ...item,
                 lineStatus: 'CLEAN',
                 matchSummary: { candidates: [] }
@@ -69,57 +70,51 @@ export async function detectDuplicates(items: DetectionItem[]): Promise<Detectio
             continue;
         }
 
-        // 1. Core Retrieve Candidates:
-        // ALWAYS match against invoices where source_type=HISTORICAL
-        // Require at least one strong key (Vendor + Company) + (amount, date, or partial invoice logic)
-        // To prevent full table scans, we search specific blocks
-
-        // Convert to Date for JS comparison logic safely
         const itemDate = new Date(item.invoiceDate);
         const amountNum = Number(item.amount);
 
-        // Let's execute a DB query for this specific item.
-        // In a high-perf scenario over millions of rows, we'd batch fetch, but for deterministic unification a tight targeted query works
-        const candidates = await db.select().from(invoices).where(
+        // 1. Fetch Historical Candidates
+        const historicalInvoices = await db.select().from(invoices).where(
             and(
-                eq(invoices.sourceType, 'HISTORICAL'),
-                // Only within the same company code scope
                 eq(invoices.companyCode, item.companyCode),
                 or(
-                    // Option A: Same Vendor and Exact Invoice Number
                     and(
                         eq(invoices.vendorCode, item.vendorCode),
                         eq(invoices.invoiceNumber, item.invoiceNumber)
                     ),
-                    // Option B: Same Vendor and VERY similar amount
                     and(
                         eq(invoices.vendorCode, item.vendorCode),
                         sql`ABS(${invoices.grossAmount} - ${amountNum}::numeric) <= (${amountNum}::numeric * ${amountTolerance}::numeric)`
                     )
                 )
             )
-        ).limit(50); // limit to bounds
+        ).limit(50);
 
-        // Intra-batch Candidates — detect duplicates within the same uploaded proposal
-        const intraCandidates = items.filter((intra, idx) => {
-            if (idx === i) return false;
-            // same company code scope required
-            if (intra.companyCode !== item.companyCode) return false;
+        // 2. Intra-Proposal Candidates
+        const intraMatches: { idx: number; item: DetectionItem }[] = [];
+        items.forEach((intra, idx) => {
+            if (idx === i) return;
+            if (intra.companyCode !== item.companyCode) return;
             const intraAmt = Number(intra.amount);
-
-            // Option A: exact same invoice number (same vendor OR cross-vendor)
-            const optA = intra.invoiceNumber === item.invoiceNumber;
-            // Option B: same vendor + very similar amount
-            const optB = intra.vendorCode === item.vendorCode && Math.abs(intraAmt - amountNum) <= (amountNum * amountTolerance);
-            // Option C: same vendor + same date
             const intraDate = new Date(intra.invoiceDate);
-            const intraDayDiff = Math.abs((intraDate.getTime() - itemDate.getTime()) / (1000 * 3600 * 24));
-            const optC = intra.vendorCode === item.vendorCode && intraDayDiff <= proximityDays && Math.abs(intraAmt - amountNum) <= (amountNum * 0.05);
-            return optA || optB || optC;
+            const dayDiff = Math.abs((intraDate.getTime() - itemDate.getTime()) / (1000 * 3600 * 24));
+
+            const optA = intra.invoiceNumber === item.invoiceNumber;
+            const optB = intra.vendorCode === item.vendorCode && Math.abs(intraAmt - amountNum) <= (amountNum * amountTolerance);
+            const optC = intra.vendorCode === item.vendorCode && dayDiff <= proximityDays && Math.abs(intraAmt - amountNum) <= (amountNum * 0.05);
+
+            if (optA || optB || optC) {
+                intraMatches.push({ idx, item: intra });
+                // Build graph for clustering
+                if (!adj.has(i)) adj.set(i, new Set());
+                if (!adj.has(idx)) adj.set(idx, new Set());
+                adj.get(i)!.add(idx);
+                adj.get(idx)!.add(i);
+            }
         });
 
         const allCandidates = [
-            ...candidates.map(c => ({
+            ...historicalInvoices.map(c => ({
                 id: c.id,
                 invoiceDate: new Date(c.invoiceDate),
                 vendorCode: c.vendorCode,
@@ -128,8 +123,8 @@ export async function detectDuplicates(items: DetectionItem[]): Promise<Detectio
                 currency: c.currency,
                 sourceType: 'HISTORICAL'
             })),
-            ...intraCandidates.map((c, idx) => ({
-                id: `INTRA-${c.invoiceNumber}-${idx}`,
+            ...intraMatches.map(({ idx, item: c }) => ({
+                id: `PROPOSAL-${idx}`,
                 invoiceDate: new Date(c.invoiceDate),
                 vendorCode: c.vendorCode,
                 invoiceNumber: c.invoiceNumber,
@@ -142,161 +137,137 @@ export async function detectDuplicates(items: DetectionItem[]): Promise<Detectio
         let highestScore = 0;
         const itemMatches: MatchCandidate[] = [];
 
-        // 2. Score all candidates with dynamic field-weighted similarity
         for (const cand of allCandidates) {
-            const candDate = cand.invoiceDate;
-            const dayDiff = Math.abs((candDate.getTime() - itemDate.getTime()) / (1000 * 3600 * 24));
-
-            const sameVendor = cand.vendorCode === item.vendorCode;
-            const exactInvNum = cand.invoiceNumber === item.invoiceNumber;
-
-            // Basic fuzzy invoice number (ignoring special chars, trailing spaces, leading zeros)
-            const cleanItemInv = item.invoiceNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const cleanCandInv = cand.invoiceNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const similarInvNum = !exactInvNum && (cleanItemInv === cleanCandInv || cleanCandInv.includes(cleanItemInv) || cleanItemInv.includes(cleanCandInv));
-
-            const candAmount = Number(cand.grossAmount);
-            const exactAmount = candAmount === amountNum;
-            const exactDate = dayDiff === 0;
-
-            // Determine if this is an intra-batch match
-            const isIntraProposal = cand.sourceType === 'CURRENT_PROPOSAL';
-            const sourceLabel = isIntraProposal ? '⚠ Same proposal batch' : 'Historical DB';
-
-            // ── Dynamic Field-Weighted Similarity Scoring ─────────────────────────
-            // Each field contributes a weighted point value. Score = sum of matched weights (0–100).
-            // Weights:  Invoice# 30 | Vendor 25 | Amount 25 | Date 15 | Currency 5
             let fieldScore = 0;
             const matchedFields: string[] = [];
-            const missedFields: string[] = [];
             const rules: Record<string, boolean> = {};
 
-            // 1. Invoice Number (30 points)
-            if (exactInvNum) {
-                fieldScore += 30;
-                matchedFields.push('Invoice# (exact)');
-                rules['EXACT_INVOICE_NUMBER'] = true;
-            } else if (similarInvNum) {
-                fieldScore += 20;
-                matchedFields.push('Invoice# (fuzzy)');
-                rules['FUZZY_INVOICE_NUMBER'] = true;
-            } else if (cleanCandInv.length > 4 && (cleanCandInv.startsWith(cleanItemInv.substring(0, 4)) || cleanItemInv.startsWith(cleanCandInv.substring(0, 4)))) {
-                fieldScore += 10;
-                matchedFields.push('Invoice# (partial prefix)');
-                rules['PARTIAL_INVOICE_NUMBER'] = true;
-            } else {
-                missedFields.push('Invoice#');
-            }
+            const candDate = cand.invoiceDate;
+            const dayDiff = Math.abs((candDate.getTime() - itemDate.getTime()) / (1000 * 3600 * 24));
+            const candAmount = Number(cand.grossAmount);
 
-            // 2. Vendor Code (25 points)
-            if (sameVendor) {
+            // Scoring logic
+            if (cand.invoiceNumber === item.invoiceNumber) {
+                fieldScore += 30;
+                matchedFields.push('Invoice Number');
+                rules['EXACT_INV'] = true;
+            }
+            if (cand.vendorCode === item.vendorCode) {
                 fieldScore += 25;
                 matchedFields.push('Vendor');
                 rules['SAME_VENDOR'] = true;
-            } else {
-                missedFields.push('Vendor');
             }
-
-            // 3. Amount (25 points)
-            if (exactAmount) {
+            if (candAmount === amountNum) {
                 fieldScore += 25;
-                matchedFields.push('Amount (exact)');
+                matchedFields.push('Amount');
                 rules['EXACT_AMOUNT'] = true;
             } else if (Math.abs(candAmount - amountNum) <= amountNum * amountTolerance) {
-                // Within configured tight tolerance (default 0.5%)
                 fieldScore += 20;
-                matchedFields.push('Amount (≤0.5% diff)');
+                matchedFields.push('Similar Amount');
                 rules['NEAR_AMOUNT'] = true;
-            } else if (Math.abs(candAmount - amountNum) <= amountNum * 0.05) {
-                // Within 5% — looser match, still relevant
-                fieldScore += 12;
-                matchedFields.push('Amount (≤5% diff)');
-                rules['CLOSE_AMOUNT'] = true;
-            } else {
-                missedFields.push('Amount');
             }
-
-            // 4. Invoice Date (15 points)
-            if (exactDate) {
+            if (dayDiff === 0) {
                 fieldScore += 15;
-                matchedFields.push('Date (exact)');
+                matchedFields.push('Date');
                 rules['EXACT_DATE'] = true;
             } else if (dayDiff <= proximityDays) {
-                // Within configured date proximity (default 7 days) — prorate by closeness
-                const datePts = Math.round(15 * (1 - dayDiff / (proximityDays + 1)));
-                fieldScore += datePts;
-                matchedFields.push(`Date (${Math.round(dayDiff)}d diff, +${datePts}pts)`);
+                fieldScore += Math.round(15 * (1 - dayDiff / (proximityDays + 1)));
+                matchedFields.push('Near Date');
                 rules['NEAR_DATE'] = true;
-            } else {
-                missedFields.push('Date');
             }
-
-            // 5. Currency (5 points)
-            if (item.currency && cand.currency && item.currency.trim().toUpperCase() === cand.currency.trim?.()?.toUpperCase?.()) {
+            if (item.currency === cand.currency) {
                 fieldScore += 5;
                 matchedFields.push('Currency');
                 rules['SAME_CURRENCY'] = true;
-            } else {
-                missedFields.push('Currency');
             }
 
-            // Clamp to 0–100 range
-            const baseScore = Math.min(100, Math.round(fieldScore));
-
-            // Build human-readable match comment
-            const matchContext = isIntraProposal
-                ? `INTRA-PROPOSAL [${sourceLabel}]`
-                : `HISTORICAL MATCH [${sourceLabel}]`;
-
-            const matchedStr = matchedFields.length > 0 ? `Matched: ${matchedFields.join(', ')}` : 'No key fields matched';
-            const missedStr = missedFields.length > 0 ? `Unmatched: ${missedFields.join(', ')}` : 'All fields matched';
-
-            let riskLevel = baseScore >= highThreshold ? 'HIGH RISK' : baseScore >= mediumThreshold ? 'MEDIUM RISK' : 'LOW RISK';
-            const matchComment = `${matchContext} — ${baseScore}% similarity. ${matchedStr}. ${missedStr}. Risk: ${riskLevel}.`;
-
-            // Record any hit >= mediumThreshold
+            const baseScore = Math.min(100, fieldScore);
             if (baseScore >= mediumThreshold) {
                 if (baseScore > highestScore) highestScore = baseScore;
-
-                let riskBand: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW';
-                if (baseScore >= highThreshold) riskBand = 'HIGH';
-                else if (baseScore >= mediumThreshold) riskBand = 'MEDIUM';
-
                 itemMatches.push({
                     matchedInvoiceId: cand.id,
                     score: baseScore,
-                    riskBand,
+                    riskBand: baseScore >= highThreshold ? 'HIGH' : 'MEDIUM',
                     rulesTriggered: rules,
-                    matchComment,
-                    matchedInvoice: {
-                        id: cand.id,
-                        invoiceNumber: cand.invoiceNumber,
-                        vendorCode: cand.vendorCode,
-                        amount: candAmount,
-                        invoiceDate: cand.invoiceDate,
-                        currency: (cand as any).currency
-                    }
+                    matchComment: `Match on ${matchedFields.join(', ')}`,
+                    matchedInvoice: cand
                 });
             }
-        } // end candidate loop
-
-        // Determine final line status based on the highest scoring hit
-        let lineStatus: DetectionResult['lineStatus'] = 'CLEAN';
-        if (highestScore >= highThreshold) {
-            lineStatus = 'FLAGGED_HIGH';
-        } else if (highestScore >= mediumThreshold) {
-            lineStatus = 'FLAGGED_MEDIUM';
         }
 
-        // Sort descending by highest score
-        itemMatches.sort((a, b) => b.score - a.score);
+        let lineStatus: DetectionResult['lineStatus'] = 'CLEAN';
+        if (highestScore >= highThreshold) lineStatus = 'FLAGGED_HIGH';
+        else if (highestScore >= mediumThreshold) lineStatus = 'FLAGGED_MEDIUM';
 
-        results.push({
+        preliminaryResults.push({
             ...item,
             lineStatus,
-            matchSummary: { candidates: itemMatches }
+            matchSummary: { candidates: itemMatches.sort((a, b) => b.score - a.score) }
         });
-    } // end items loop
+    }
 
-    return results;
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. CLUSTERING ENGINE (Chain Matching & Group Assignment)
+    // ─────────────────────────────────────────────────────────────────────────
+    const visited = new Set<number>();
+    const clusters: number[][] = [];
+
+    for (let i = 0; i < preliminaryResults.length; i++) {
+        if (!visited.has(i) && (preliminaryResults[i].lineStatus !== 'CLEAN' || adj.has(i))) {
+            const cluster: number[] = [];
+            const queue = [i];
+            visited.add(i);
+            while (queue.length > 0) {
+                const curr = queue.shift()!;
+                cluster.push(curr);
+                const neighbors = adj.get(curr) || [];
+                for (const neighbor of neighbors) {
+                    if (!visited.has(neighbor)) {
+                        visited.add(neighbor);
+                        queue.push(neighbor);
+                    }
+                }
+            }
+            if (cluster.length > 0) clusters.push(cluster);
+        }
+    }
+
+    // 4. Final Metadata Synthesis for Clusters
+    const finalResults = [...preliminaryResults];
+    clusters.forEach((cluster) => {
+        const groupId = `GRP-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+
+        cluster.forEach(idx => {
+            const res = finalResults[idx];
+            const itemsInGroup = cluster.length;
+            const hasIntra = res.matchSummary.candidates.some(c => String(c.matchedInvoiceId).startsWith('PROPOSAL-')) || itemsInGroup > 1;
+            const hasHistorical = res.matchSummary.candidates.some(c => !String(c.matchedInvoiceId).startsWith('PROPOSAL-'));
+
+            let source: DetectionResult['matchSource'] = 'Intra-Proposal Duplicate';
+            if (hasIntra && hasHistorical) source = 'Mixed Match';
+            else if (hasHistorical) source = 'Historical Data Match';
+
+            // Top Reason
+            const topCandidate = res.matchSummary.candidates[0];
+            const reason = topCandidate
+                ? `Matched on ${Object.keys(topCandidate.rulesTriggered).join(', ')}`
+                : itemsInGroup > 1 ? "Shared reference with other proposal items" : "Unknown match criteria";
+
+            const comments = `${itemsInGroup} invoice(s) connected in this group. Match found on ${reason}. Source: ${source}. Conf Score: ${topCandidate?.score || 'N/A'}%`;
+
+            res.groupId = groupId;
+            res.matchSource = source;
+            res.matchingReason = reason;
+            res.systemComments = comments;
+            res.matchedInvoiceCount = itemsInGroup;
+
+            // If part of a group but labeled CLEAN, escalate status to MEDIUM if intra-duplicates exist
+            if (res.lineStatus === 'CLEAN' && itemsInGroup > 1) {
+                res.lineStatus = 'FLAGGED_MEDIUM';
+            }
+        });
+    });
+
+    return finalResults;
 }
+

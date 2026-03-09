@@ -124,6 +124,10 @@ export const paymentProposalItems = pgTable("payment_proposal_items", {
     bank: text("bank"),
     lineStatus: text("line_status").notNull().default("CLEAN"), // CLEAN, FLAGGED_LOW, FLAGGED_MEDIUM, FLAGGED_HIGH
     matchSummary: jsonb("match_summary"),
+    groupId: varchar("group_id"),
+    matchSource: text("match_source"), // Intra-Proposal Duplicate, Historical Data Match, Mixed Match
+    matchingReason: text("matching_reason"),
+    systemComments: text("system_comments"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => ({
     unqIdx: index("pay_prop_item_unq_idx").on(table.proposalId, table.invoiceNumber, table.vendorCode, table.amount, table.invoiceDate),
@@ -185,6 +189,9 @@ export const invoices = pgTable("invoices", {
     isDuplicateCandidate: boolean("is_duplicate_candidate").notNull().default(false),
     confirmedDuplicate: boolean("confirmed_duplicate").notNull().default(false),
     duplicateGroupId: varchar("duplicate_group_id"),
+    matchSource: text("match_source"),
+    matchingReason: text("matching_reason"),
+    systemComments: text("system_comments"),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
 
     // Legacy Fields map
@@ -391,6 +398,8 @@ export const dppsConfig = pgTable("dpps_config", {
     dateProximityDays: integer("date_proximity_days").notNull().default(7),
     fuzzyAmountTolerance: decimal("fuzzy_amount_tolerance", { precision: 5, scale: 3 }).notNull().default("0.005"),
     legalEntityScope: text("legal_entity_scope").notNull().default("within"),
+    reportingCurrency: text("reporting_currency").notNull().default("USD"),
+    showSideBySideAmounts: boolean("show_side_by_side_amounts").notNull().default(false),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 

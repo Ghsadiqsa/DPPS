@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { sql, and, eq, gte, lte, ilike, or, inArray } from "drizzle-orm";
-import { invoices, vendors } from "@/lib/schema";
+import { invoices, vendors, dppsConfig } from "@/lib/schema";
+import { convertCurrency } from "@/lib/currency";
 
 export async function GET(request: NextRequest) {
     try {
+        // Fetch Config for currency preferences (Safely)
+        let reportingCurrency = 'USD';
+        let showSideBySide = false;
+        try {
+            const [config] = await db.select().from(dppsConfig).where(eq(dppsConfig.id, 'default'));
+            if (config) {
+                reportingCurrency = (config as any).reportingCurrency || 'USD';
+                showSideBySide = (config as any).showSideBySideAmounts || false;
+            }
+        } catch (e) {
+            console.warn("API Invoices: Database column mismatch - defaulting to USD.");
+        }
+
         const { searchParams } = new URL(request.url);
 
         // Filters
@@ -67,7 +81,12 @@ export async function GET(request: NextRequest) {
             poNumber: invoices.poNumber,
             erpType: invoices.erpType,
             companyCode: invoices.companyCode,
-            paymentStatus: invoices.paymentStatus
+            paymentStatus: invoices.paymentStatus,
+            duplicateGroupId: invoices.duplicateGroupId,
+            matchSource: invoices.matchSource,
+            matchingReason: invoices.matchingReason,
+            systemComments: invoices.systemComments
+
         })
             .from(invoices)
             .leftJoin(vendors, eq(invoices.vendorId, vendors.id))
@@ -84,12 +103,19 @@ export async function GET(request: NextRequest) {
         const totalCount = Number(countResult[0]?.count || 0);
 
         return NextResponse.json({
-            data: results,
+            data: results.map(item => ({
+                ...item,
+                amountInReportingCurrency: convertCurrency(Number(item.grossAmount), item.currency || 'USD', reportingCurrency)
+            })),
             pagination: {
                 totalCount,
                 totalPages: Math.ceil(totalCount / limit),
                 currentPage: page,
                 limit
+            },
+            metadata: {
+                reportingCurrency,
+                showSideBySideAmounts: showSideBySide
             }
         });
 

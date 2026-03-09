@@ -18,6 +18,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
+import { formatCurrency } from "@/lib/currency";
+import { useConfig } from "@/components/providers/ConfigProvider";
 
 import {
   Sheet,
@@ -35,11 +37,12 @@ import {
 import { BrainCircuit, LineChart, History, Building2 } from "lucide-react";
 
 export default function BlockedPaymentsCockpit() {
+  const { reportingCurrency, showSideBySideAmounts } = useConfig();
   const [comments, setComments] = useState<Record<string, string>>({});
   const [filterType, setFilterType] = useState<string>("All");
 
   // Fetch invoices from API in targeted states
-  const { data: invoicesData, isLoading, refetch } = useQuery({
+  const { data: invoicesResponse, isLoading, refetch } = useQuery({
     queryKey: ["blocked-invoices", filterType],
     queryFn: async () => {
       const res = await fetch(`/api/invoices?status=BLOCKED`);
@@ -52,6 +55,8 @@ export default function BlockedPaymentsCockpit() {
     id: string;
     invoiceNumber: string;
     amount: string;
+    currency?: string;
+    amountInReportingCurrency?: number;
     similarityScore: number;
     status: string;
     vendor: {
@@ -62,7 +67,8 @@ export default function BlockedPaymentsCockpit() {
     investigationNotes?: string;
   }
 
-  const invoicesList = (Array.isArray(invoicesData) ? invoicesData : []) as InvoiceItem[];
+  const invoicesList = (invoicesResponse?.data || []) as InvoiceItem[];
+  const metadata = invoicesResponse?.metadata || { reportingCurrency: 'USD', showSideBySideAmounts: false };
 
   const duplicateTypes = [
     { label: "Exact Match", count: 12, color: "bg-blue-500" },
@@ -177,8 +183,17 @@ export default function BlockedPaymentsCockpit() {
                   </HoverCard>
                 </TableCell>
                 <TableCell className="font-mono text-xs">{c.invoiceNumber || 'N/A'}</TableCell>
-                <TableCell className="font-mono text-xs font-bold">
-                  {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(parseFloat(c.amount) || 0)}
+                <TableCell>
+                  <div className="flex flex-col">
+                    <span className="font-mono font-bold">
+                      {formatCurrency(Number(metadata.showSideBySideAmounts ? c.amountInReportingCurrency : c.amount), metadata.reportingCurrency || c.currency || 'USD')}
+                    </span>
+                    {metadata.showSideBySideAmounts && (
+                      <span className="text-[10px] text-slate-400 font-bold uppercase">
+                        Local: {formatCurrency(Number(c.amount), c.currency || 'USD')}
+                      </span>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1">

@@ -177,20 +177,16 @@ export function generateCSVTemplate(erp: ERPType, entityType: EntityType): strin
 }
 
 export function generateTemplateDataArray(erp: ERPType, entityType: EntityType): string[][] {
-    const fields = ERP_MAPPINGS[erp][entityType];
-    if (!fields) {
-        throw new Error(`Template not found for ERP: ${erp}, Entity Type: ${entityType}`);
+    // Return flexible, generic column headers since the DPPS Engine now uses universal fuzzy NLP parsing.
+    // We no longer enforce strict ERP templates or mapping rows.
+    if (entityType === 'Vendors') {
+        return [['Vendor ID', 'Vendor Name', 'Tax ID', 'Company Code', 'IBAN', 'Address Line 1', 'Postal Code', 'Country', 'Email', 'Phone Number']];
     }
-
-    // Format headers: Use the SAP/ERP-specific names as the primary header
-    const headers = fields.map(f => {
-        return f.required ? `${f.name} (*)` : f.name;
-    });
-
-    // The second row is the conceptual mapping (human readable)
-    const mappedRow = fields.map(f => f.mappedTo || f.name);
-
-    return [headers, mappedRow];
+    if (entityType === 'Customers') {
+        return [['Customer ID', 'Customer Name', 'Tax ID', 'Company Code', 'Billing Address', 'Email', 'Phone']];
+    }
+    // Financial Documents
+    return [['Invoice Number', 'Vendor ID', 'Gross Amount', 'Currency', 'Invoice Date', 'Posting Date', 'Company Code', 'Purchase Order Number']];
 }
 
 /**

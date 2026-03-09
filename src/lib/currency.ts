@@ -24,7 +24,7 @@ const EXCHANGE_RATES: Record<string, number> = {
     INR: 0.012,
     BRL: 0.20,
     MXN: 0.058,
-    ZAR: 0.055,
+    ZAR: 0.053,
     AED: 0.27,
     SAR: 0.27,
     KRW: 0.00075,
@@ -39,9 +39,17 @@ const EXCHANGE_RATES: Record<string, number> = {
     IDR: 0.000063,
     MYR: 0.21,
     VND: 0.000040,
-    NGN: 0.00065,
-    KES: 0.0077,
-    EGP: 0.021,
+    // African Currencies
+    GHS: 0.078,    // Ghanaian Cedi
+    NGN: 0.00065,  // Nigerian Naira
+    XOF: 0.0016,   // CFA Franc (West)
+    XAF: 0.0016,   // CFA Franc (Central)
+    KES: 0.0077,   // Kenyan Shilling
+    EGP: 0.021,    // Egyptian Pound
+    UGX: 0.00026,  // Ugandan Shilling
+    RWF: 0.00078,  // Rwandan Franc
+    TZS: 0.00039,  // Tanzanian Shilling
+    MAD: 0.099,    // Moroccan Dirham
     PKR: 0.0036,
     BDT: 0.0091,
     COP: 0.00025,

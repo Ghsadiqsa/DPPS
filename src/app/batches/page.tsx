@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { formatCurrency } from "@/lib/currency";
+import { useConfig } from "@/components/providers/ConfigProvider";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +20,8 @@ import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function PaymentBatchesPage() {
-    const [batches, setBatches] = useState<any[]>([]);
+    const { reportingCurrency, showSideBySideAmounts } = useConfig();
+    const [batchesData, setBatchesData] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [expandedBatchId, setExpandedBatchId] = useState<string | null>(null);
 
@@ -33,7 +35,7 @@ export default function PaymentBatchesPage() {
             const res = await fetch('/api/batches?includeItems=true');
             if (res.ok) {
                 const data = await res.json();
-                setBatches(data);
+                setBatchesData(data);
             }
         } catch (error) {
             console.error("Failed to load batches:", error);
@@ -41,6 +43,9 @@ export default function PaymentBatchesPage() {
             setIsLoading(false);
         }
     };
+
+    const batches = batchesData?.data || [];
+    const metadata = batchesData?.metadata || { reportingCurrency: 'USD', showSideBySideAmounts: false };
 
     return (
         <div className="min-h-screen bg-slate-50 p-8">
@@ -73,7 +78,7 @@ export default function PaymentBatchesPage() {
                             <p className="text-slate-500 max-w-sm mx-auto mt-2 text-sm">Release approved proposals from the Payment Gate to automatically generate batched export ledgers here.</p>
                         </div>
                     ) : (
-                        batches.map((batch) => (
+                        batches.map((batch: any) => (
                             <Card key={batch.id} className="overflow-hidden shadow-sm hover:shadow-md transition-all border-slate-200/60">
                                 <div
                                     className="bg-white p-5 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors"
@@ -106,7 +111,9 @@ export default function PaymentBatchesPage() {
                                     <div className="flex items-center gap-6">
                                         <div className="text-right">
                                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Total Payload Value</p>
-                                            <p className="text-xl font-black text-emerald-700">{formatCurrency(batch.totalAmount)}</p>
+                                            <p className="text-xl font-black text-emerald-700">
+                                                {formatCurrency(Number(metadata.showSideBySideAmounts ? batch.amountInReportingCurrency : batch.totalAmount), metadata.reportingCurrency)}
+                                            </p>
                                         </div>
                                         <Button variant="ghost" size="icon" className="h-10 w-10 text-slate-400 rounded-full hover:bg-slate-200">
                                             {expandedBatchId === batch.id ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
@@ -147,8 +154,15 @@ export default function PaymentBatchesPage() {
                                                                     <td className="p-3 text-slate-400 font-medium tabular-nums text-xs">{idx + 1}</td>
                                                                     <td className="p-3 text-slate-900 font-bold">{row.invoiceNumber || row.invoiceId}</td>
                                                                     <td className="p-3 text-slate-600 font-medium">{row.vendorCode}</td>
-                                                                    <td className="p-3 text-emerald-700 font-bold tabular-nums text-right text-sm">{formatCurrency(row.amount)}</td>
-                                                                    <td className="p-3 text-slate-500 font-bold text-xs">{row.currency}</td>
+                                                                    <td className="p-3 text-emerald-700 font-bold tabular-nums text-right text-sm">
+                                                                        <div className="flex flex-col items-end">
+                                                                            <span>{formatCurrency(Number(metadata.showSideBySideAmounts ? row.amountInReportingCurrency : row.amount), metadata.reportingCurrency || row.currency || 'USD')}</span>
+                                                                            {metadata.showSideBySideAmounts && (
+                                                                                <span className="text-[8px] text-slate-400 font-bold uppercase">Local: {formatCurrency(Number(row.amount), row.currency || 'USD')}</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="p-3 text-slate-500 font-bold text-xs">{row.currency || 'USD'}</td>
                                                                 </tr>
                                                             ))}
                                                             {(!batch.items || batch.items.length === 0) && (

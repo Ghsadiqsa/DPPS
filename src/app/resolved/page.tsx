@@ -24,7 +24,8 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, convertCurrency } from "@/lib/currency";
+import { useConfig } from "@/components/providers/ConfigProvider";
 import { format } from "date-fns";
 
 interface ResolvedInvoice {
@@ -37,6 +38,7 @@ interface ResolvedInvoice {
     companyCode: string;
     grossAmount: string;
     amount: string;
+    amountInReportingCurrency?: number;
     currency: string;
     invoiceDate: string;
     poNumber: string;
@@ -59,24 +61,28 @@ export default function DuplicateResolved() {
     const [isExporting, setIsExporting] = useState<string | null>(null);
 
     // Fetch all resolved invoices
-    const { data: invoices = [], isLoading } = useQuery<ResolvedInvoice[]>({
+    // Fetch all resolved invoices
+    const { data: responseData, isLoading, refetch } = useQuery<any>({
         queryKey: ["resolved-invoices"],
         queryFn: async () => {
             const res = await fetch('/api/invoices?lifecycleState=CONFIRMED_DUPLICATE&lifecycleState=NOT_DUPLICATE&lifecycleState=RECOVERY_RESOLVED');
             if (!res.ok) throw new Error("Failed to fetch");
-            const json = await res.json();
-            const dataArray = Array.isArray(json.data) ? json.data : Array.isArray(json) ? json : [];
-            // Map lifecycleState to status if status is undefined
-            return dataArray.map((i: any) => ({
-                ...i,
-                status: i.status || i.lifecycleState
-            }));
+            return res.json();
         }
     });
 
+    const results = responseData?.data || [];
+    const metadata = responseData?.metadata || { reportingCurrency: 'USD', showSideBySideAmounts: false };
+
+    const invoices = useMemo(() =>
+        results.map((i: any) => ({
+            ...i,
+            status: i.status || i.lifecycleState
+        })), [results]);
+
     // Categorize invoices
-    const readyForPayment = useMemo(() => invoices.filter(i => i.status === 'NOT_DUPLICATE'), [invoices]);
-    const confirmedDuplicate = useMemo(() => invoices.filter(i => i.status === 'CONFIRMED_DUPLICATE' || i.status === 'RECOVERY_RESOLVED'), [invoices]);
+    const readyForPayment = useMemo(() => invoices.filter((i: any) => i.status === 'NOT_DUPLICATE'), [invoices]);
+    const confirmedDuplicate = useMemo(() => invoices.filter((i: any) => i.status === 'CONFIRMED_DUPLICATE' || i.status === 'RECOVERY_RESOLVED'), [invoices]);
 
     // Apply filters
     const filteredList = useMemo(() => {
@@ -86,7 +92,7 @@ export default function DuplicateResolved() {
 
         if (search) {
             const q = search.toLowerCase();
-            list = list.filter(i =>
+            list = list.filter((i: any) =>
                 i.invoiceNumber.toLowerCase().includes(q) ||
                 (i.vendorName || '').toLowerCase().includes(q) ||
                 (i.vendorCode || '').toLowerCase().includes(q)
@@ -101,7 +107,7 @@ export default function DuplicateResolved() {
     });
     const toggleSelectAll = () => {
         if (selectedIds.size === filteredList.length) setSelectedIds(new Set());
-        else setSelectedIds(new Set(filteredList.map(i => i.id)));
+        else setSelectedIds(new Set(filteredList.map((i: any) => i.id)));
     };
 
     // Export API call
@@ -141,6 +147,7 @@ export default function DuplicateResolved() {
             toast.success("Payment load exported successfully ✓", { id: toastId });
             setPreviewOpen(false); // Close preview after successful export
             setSelectedIds(new Set());
+            refetch(); // IMMEDIATELY refresh the list to remove transitioned items
 
         } catch (err: any) {
             toast.error(err.message || "Failed to generate export file", { id: toastId });
@@ -160,7 +167,7 @@ export default function DuplicateResolved() {
         URL.revokeObjectURL(url);
     }
 
-    const selectedInvoices = useMemo(() => filteredList.filter(i => selectedIds.has(i.id)), [filteredList, selectedIds]);
+    const selectedInvoices = useMemo(() => filteredList.filter((i: any) => selectedIds.has(i.id)), [filteredList, selectedIds]);
 
     return (
         <div className="min-h-screen bg-slate-50/50 pb-20">
@@ -223,7 +230,7 @@ export default function DuplicateResolved() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {selectedInvoices.map((inv, idx) => (
+                                    {selectedInvoices.map((inv: any, idx: number) => (
                                         <tr key={inv.id} className={cn(
                                             "border-b border-slate-100 hover:bg-emerald-50/30 transition-colors",
                                             idx % 2 === 0 ? "bg-white" : "bg-[#fcfdff]"
@@ -236,7 +243,14 @@ export default function DuplicateResolved() {
                                             <td className="px-4 py-2 border-r border-slate-100/50 text-slate-900 font-bold whitespace-nowrap truncate max-w-[200px]" title={inv.vendorName}>{inv.vendorName}</td>
                                             <td className="px-4 py-2 border-r border-slate-100/50 text-indigo-700 font-bold whitespace-nowrap">{inv.invoiceNumber}</td>
                                             <td className="px-4 py-2 border-r border-slate-100/50 text-slate-600 whitespace-nowrap">{inv.invoiceDate ? format(new Date(inv.invoiceDate), 'MM/dd/yyyy') : ''}</td>
-                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-900 font-mono font-bold text-right whitespace-nowrap">{formatCurrency(Number(inv.grossAmount))}</td>
+                                            <td className="px-4 py-2 border-r border-slate-100/50 text-slate-900 font-mono font-bold text-right whitespace-nowrap">
+                                                <div className="flex flex-col items-end">
+                                                    <span>{formatCurrency(Number(metadata.showSideBySideAmounts ? inv.amountInReportingCurrency : inv.grossAmount), metadata.reportingCurrency || inv.currency || 'USD')}</span>
+                                                    {metadata.showSideBySideAmounts && (
+                                                        <span className="text-[9px] text-slate-400 font-bold uppercase">Local: {formatCurrency(Number(inv.grossAmount), inv.currency || 'USD')}</span>
+                                                    )}
+                                                </div>
+                                            </td>
                                             <td className="px-4 py-2 border-r border-slate-100/50 text-slate-500 whitespace-nowrap">{inv.currency}</td>
                                             <td className="px-4 py-2 border-r border-slate-100/50 text-slate-500 whitespace-nowrap">{inv.poNumber || '-'}</td>
                                             <td className="px-4 py-2 bg-emerald-50/50 text-emerald-700 font-bold text-[10px] tracking-widest uppercase whitespace-nowrap">NOT DUPLICATE</td>
@@ -355,7 +369,16 @@ export default function DuplicateResolved() {
                                                 <div className="flex items-center gap-3 mt-1 text-[10px] font-bold">
                                                     <span className="text-slate-500 flex items-center gap-1"><Calendar className="h-3 w-3" /> {item.invoiceDate ? format(new Date(item.invoiceDate), 'MMM dd, yyyy') : '-'}</span>
                                                     <span className="text-slate-300">|</span>
-                                                    <span className="font-black text-slate-700 font-mono">{formatCurrency(Number(item.grossAmount))}</span>
+                                                    <div className="flex flex-col items-end">
+                                                        <span className="font-black text-slate-700 font-mono">
+                                                            {formatCurrency(Number(metadata.showSideBySideAmounts ? item.amountInReportingCurrency : item.grossAmount), metadata.reportingCurrency || item.currency || 'USD')}
+                                                        </span>
+                                                        {metadata.showSideBySideAmounts && (
+                                                            <span className="text-[8px] font-bold text-slate-400 uppercase">
+                                                                Local: {formatCurrency(Number(item.grossAmount), item.currency || 'USD')}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>

@@ -10,6 +10,8 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { formatCurrency, convertCurrency } from "@/lib/currency";
+import { useConfig } from "@/components/providers/ConfigProvider";
 
 interface CaseDetailProps {
   params: Promise<{ id: string }>;
@@ -18,6 +20,7 @@ interface CaseDetailProps {
 export default function CaseDetail({ params }: CaseDetailProps) {
   const { id } = use(params);
   const router = useRouter();
+  const { reportingCurrency, showSideBySideAmounts } = useConfig();
   const [isProcessing, setIsProcessing] = useState(false);
 
   // Fetch Real Data
@@ -44,7 +47,8 @@ export default function CaseDetail({ params }: CaseDetailProps) {
       amount: caseItem?.primaryInvoice?.amount || 0,
       currency: "USD",
       invoiceDate: "2023-01-01",
-      sourceSystem: "Oracle"
+      sourceSystem: "Oracle",
+      amountInReportingCurrency: undefined as number | undefined
     },
     reasons: ["Fuzzy Match", "Amount Similarity"],
     score: caseItem?.riskScore || 0
@@ -164,9 +168,16 @@ export default function CaseDetail({ params }: CaseDetailProps) {
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground block">Amount</span>
-                      <span className="font-mono font-bold text-lg">
-                        {new Intl.NumberFormat('en-US', { style: 'currency', currency: caseItem.primaryInvoice.currency }).format(caseItem.primaryInvoice.amount)}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="font-mono font-bold text-lg">
+                          {formatCurrency(Number(showSideBySideAmounts ? (caseItem.primaryInvoice.amountInReportingCurrency || convertCurrency(caseItem.primaryInvoice.amount, caseItem.primaryInvoice.currency, reportingCurrency)) : caseItem.primaryInvoice.amount), showSideBySideAmounts ? reportingCurrency : caseItem.primaryInvoice.currency)}
+                        </span>
+                        {showSideBySideAmounts && (
+                          <span className="text-[10px] text-slate-400 font-bold uppercase">
+                            Local: {formatCurrency(caseItem.primaryInvoice.amount, caseItem.primaryInvoice.currency)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground block">Date</span>
@@ -200,9 +211,16 @@ export default function CaseDetail({ params }: CaseDetailProps) {
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground block">Amount</span>
-                      <span className="font-mono font-bold text-lg text-amber-600 dark:text-amber-500">
-                        {new Intl.NumberFormat('en-US', { style: 'currency', currency: candidate.invoice.currency }).format(candidate.invoice.amount)}
-                      </span>
+                      <div className="flex flex-col">
+                        <span className="font-mono font-bold text-lg text-amber-600 dark:text-amber-500">
+                          {formatCurrency(Number(showSideBySideAmounts ? (candidate.invoice.amountInReportingCurrency || convertCurrency(candidate.invoice.amount, candidate.invoice.currency, reportingCurrency)) : candidate.invoice.amount), showSideBySideAmounts ? reportingCurrency : candidate.invoice.currency)}
+                        </span>
+                        {showSideBySideAmounts && (
+                          <span className="text-[10px] text-slate-400 font-bold uppercase">
+                            Local: {formatCurrency(candidate.invoice.amount, candidate.invoice.currency)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground block">Date</span>

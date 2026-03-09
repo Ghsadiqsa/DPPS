@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { sql, and, eq, gte, lte, or, ilike, inArray } from "drizzle-orm";
-import { invoices, vendors } from "@/lib/schema";
+import { invoices, vendors, dppsConfig } from "@/lib/schema";
 
 export async function POST(request: NextRequest) {
     try {
@@ -34,26 +34,58 @@ export async function POST(request: NextRequest) {
 
         const whereClause = filters.length > 0 ? and(...filters) : undefined;
 
-        // 2. High-Performance Aggregated Metrics (CFO-reconciled)
-        const summaryResult: any = await db.execute(sql`
-            SELECT
-                count(*) as total_checked,
-                sum(gross_amount) as total_value,
-                count(*) filter (where lifecycle_state = 'BLOCKED') as prevented_count,
-                sum(gross_amount) filter (where lifecycle_state = 'BLOCKED') as prevented_value,
-                count(*) filter (where lifecycle_state in ('PAID_DUPLICATE', 'RECOVERY')) as leakage_count,
-                sum(gross_amount) filter (where lifecycle_state in ('PAID_DUPLICATE', 'RECOVERY')) as leakage_value,
-                count(*) filter (where lifecycle_state = 'RESOLVED') as recovered_count,
-                sum(gross_amount) filter (where lifecycle_state = 'RESOLVED') as recovered_value,
-                avg(risk_score) as avg_risk
-            FROM invoices
-            ${whereClause ? sql`WHERE ${whereClause}` : sql``}
-        `);
+        // 2. Data Fetch & Base Summarization
+        // To be mathematically correct with multi-currency, we calculate in JS
+        const allFilteredInvoices = await db.select({
+            grossAmount: invoices.grossAmount,
+            currency: invoices.currency,
+            lifecycleState: invoices.lifecycleState,
+            riskScore: invoices.riskScore,
+        })
+            .from(invoices)
+            .where(whereClause);
 
-        const s = summaryResult.rows[0];
-        const totalChecked = Number(s.total_checked || 0);
-        const leakageValue = Number(s.leakage_value || 0);
-        const recoveredValue = Number(s.recovered_value || 0);
+        // Fetch Config for currency preferences (Safely)
+        let reportingCurrency = 'USD';
+        let showSideBySide = false;
+        try {
+            const [config] = await db.select().from(dppsConfig).where(eq(dppsConfig.id, 'default'));
+            if (config) {
+                reportingCurrency = (config as any).reportingCurrency || 'USD';
+                showSideBySide = (config as any).showSideBySideAmounts || false;
+            }
+        } catch (e) {
+            console.warn("API: Database schema mismatch on reportingCurrency - using defaults.");
+        }
+
+        const { convertCurrency } = await import("@/lib/currency");
+
+        // CFO-Grade JS Aggregation
+        let totalChecked = allFilteredInvoices.length;
+        let totalVal_Base = 0;
+        let pCount = 0, pVal_Base = 0;
+        let lCount = 0, lVal_Base = 0;
+        let rCount = 0, rVal_Base = 0;
+        let riskSum = 0;
+
+        allFilteredInvoices.forEach(inv => {
+            const amount_Base = convertCurrency(Number(inv.grossAmount), inv.currency || 'USD', reportingCurrency);
+            totalVal_Base += amount_Base;
+            riskSum += Number(inv.riskScore || 0);
+
+            if (inv.lifecycleState === 'CONFIRMED_DUPLICATE') {
+                pCount++;
+                pVal_Base += amount_Base;
+            }
+            if (['RECOVERY_OPENED', 'RECOVERY_RESOLVED'].includes(inv.lifecycleState || '')) {
+                lCount++;
+                lVal_Base += amount_Base;
+            }
+            if (inv.lifecycleState === 'RECOVERY_RESOLVED') {
+                rCount++;
+                rVal_Base += amount_Base;
+            }
+        });
 
         // 3. Paginated Transaction Detail
         const limit = p?.limit || 25;
@@ -82,22 +114,30 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
             summary: {
                 totalChecked: totalChecked,
-                totalValue: Number(s.total_value || 0),
-                prevented: { count: Number(s.prevented_count || 0), value: Number(s.prevented_value || 0) },
-                leakage: { count: Number(s.leakage_count || 0), value: leakageValue },
-                recovered: { count: Number(s.recovered_count || 0), value: recoveredValue },
+                totalValue: totalVal_Base,
+                prevented: { count: pCount, value: pVal_Base },
+                leakage: { count: lCount, value: lVal_Base },
+                recovered: { count: rCount, value: rVal_Base },
 
-                leakageRate: totalChecked > 0 ? (Number(s.leakage_count) / totalChecked) * 100 : 0,
-                recoveryEfficiency: leakageValue > 0 ? (recoveredValue / leakageValue) * 100 : 0,
-                avgRiskScore: Number(s.avg_risk || 0).toFixed(1)
+                leakageRate: totalChecked > 0 ? (lCount / totalChecked) * 100 : 0,
+                recoveryEfficiency: lVal_Base > 0 ? (rVal_Base / lVal_Base) * 100 : 0,
+                avgRiskScore: totalChecked > 0 ? (riskSum / totalChecked).toFixed(1) : "0.0",
+                reportingCurrency
             },
-            data: detailedData,
+            data: detailedData.map(item => ({
+                ...item,
+                amountInReportingCurrency: convertCurrency(Number(item.amount), item.currency || 'USD', reportingCurrency)
+            })),
             pagination: {
                 total: totalChecked,
                 page: p?.page || 1,
                 pages: Math.ceil(totalChecked / limit)
             },
-            reconciledAt: new Date().toISOString()
+            metadata: {
+                reconciledAt: new Date().toISOString(),
+                reportingCurrency,
+                showSideBySideAmounts: showSideBySide
+            }
         });
 
     } catch (error: any) {

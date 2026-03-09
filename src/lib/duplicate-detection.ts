@@ -21,6 +21,8 @@ export const DEFAULT_CONFIG = {
     dateProximityDays: 7,
     fuzzyAmountTolerance: 0.005, // 0.5%
     legalEntityScope: 'within' as 'within' | 'cross',
+    reportingCurrency: 'USD',
+    showSideBySideAmounts: false,
 };
 
 export type RiskLevel = 'critical' | 'high' | 'medium' | 'low';
@@ -62,6 +64,8 @@ export interface DetectionConfig {
     dateProximityDays: number;
     fuzzyAmountTolerance: number;
     legalEntityScope: 'within' | 'cross';
+    reportingCurrency: string;
+    showSideBySideAmounts: boolean;
 }
 
 /**

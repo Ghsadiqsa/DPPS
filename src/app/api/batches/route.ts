@@ -1,10 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { paymentBatches, paymentBatchItems, users } from "@/lib/schema";
+import { paymentBatches, paymentBatchItems, users, dppsConfig } from "@/lib/schema";
 import { desc, eq } from "drizzle-orm";
+import { convertCurrency } from "@/lib/currency";
 
 export async function GET(request: NextRequest) {
     try {
+        // Fetch Config for currency preferences (Safely)
+        let reportingCurrency = 'USD';
+        let showSideBySide = false;
+        try {
+            const [config] = await db.select().from(dppsConfig).where(eq(dppsConfig.id, 'default'));
+            if (config) {
+                reportingCurrency = (config as any).reportingCurrency || 'USD';
+                showSideBySide = (config as any).showSideBySideAmounts || false;
+            }
+        } catch (e) {
+            console.warn("API Batches: Database column mismatch - defaulting to USD.");
+        }
+
         const batches = await db.select({
             id: paymentBatches.id,
             totalAmount: paymentBatches.totalAmount,
@@ -36,10 +50,20 @@ export async function GET(request: NextRequest) {
 
         const enrichedBatches = batches.map(b => ({
             ...b,
-            items: allItems.filter(i => i.batchId === b.id)
+            amountInReportingCurrency: convertCurrency(Number(b.totalAmount), 'USD', reportingCurrency), // Assuming totalAmount is USD for simplification, but ideally we'd track original batch currency
+            items: allItems.filter(i => i.batchId === b.id).map(i => ({
+                ...i,
+                amountInReportingCurrency: convertCurrency(Number(i.amount), i.currency || 'USD', reportingCurrency)
+            }))
         }));
 
-        return NextResponse.json(enrichedBatches);
+        return NextResponse.json({
+            data: enrichedBatches,
+            metadata: {
+                reportingCurrency,
+                showSideBySideAmounts: showSideBySide
+            }
+        });
 
     } catch (error: any) {
         console.error("Batches API Error:", error);

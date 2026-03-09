@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { getSupportedCurrencies, getExchangeRate } from "@/lib/currency";
 
 interface DppsConfig {
   id: string;
@@ -37,6 +38,8 @@ interface DppsConfig {
   legalEntityScope: string;
   enableFuzzyLogic: boolean;
   useCompositeKeys: boolean;
+  reportingCurrency: string;
+  showSideBySideAmounts: boolean;
 }
 
 const DEFAULT_CONFIG: DppsConfig = {
@@ -50,6 +53,8 @@ const DEFAULT_CONFIG: DppsConfig = {
   legalEntityScope: "within",
   enableFuzzyLogic: true,
   useCompositeKeys: true,
+  reportingCurrency: 'USD',
+  showSideBySideAmounts: false,
 };
 
 export default function SettingsPage() {
@@ -620,6 +625,106 @@ export default function SettingsPage() {
                   onCheckedChange={(checked) => setConfig(prev => ({ ...prev, useCompositeKeys: checked }))}
                 />
               </div>
+            </div>
+
+          </CardContent>
+        </Card>
+
+        {/* Currency & Reporting Configuration Card */}
+        <Card className="overflow-hidden border-emerald-100">
+          <CardHeader className="bg-emerald-50/50 border-b border-emerald-100">
+            <div className="flex items-center gap-2">
+              <RefreshCw className="h-5 w-5 text-emerald-500" />
+              <div>
+                <CardTitle>Currency & Reporting Base</CardTitle>
+                <CardDescription>Configure global reporting currency and multi-currency display</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6 pt-6">
+            {/* Global Reporting Currency */}
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Label className="text-base font-bold">Base Reporting Currency</Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[250px]">
+                        The primary currency used for all dashboard KPIs and global calculations.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <p className="text-xs text-muted-foreground">Select from supported global currencies (USD, CAD, GBP, EUR, etc.)</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Select
+                  value={config.reportingCurrency || 'USD'}
+                  onValueChange={(v) => setConfig(prev => ({ ...prev, reportingCurrency: v }))}
+                >
+                  <SelectTrigger className="w-32 font-bold">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {getSupportedCurrencies().sort().map(curr => (
+                      <SelectItem key={curr} value={curr}>{curr}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Side-by-Side Display Toggle */}
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Label className="text-base font-bold">Dual-Currency Display</Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-[250px]">
+                        Show both the original invoice amount AND the reporting base amount side-by-side in grid views.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <p className="text-xs text-muted-foreground">Enable visual reconciliation between Local and Global base amounts</p>
+              </div>
+              <div className="flex items-center">
+                <Switch
+                  checked={config.showSideBySideAmounts}
+                  onCheckedChange={(checked) => setConfig(prev => ({ ...prev, showSideBySideAmounts: checked }))}
+                />
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Reference Exchange Rates (Read-only for transparency) */}
+            <div className="space-y-3">
+              <Label className="text-sm font-black uppercase text-slate-400 tracking-widest">Active Reference FX Rates (per {config.reportingCurrency || 'USD'})</Label>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                {['USD', 'EUR', 'GBP', 'CAD', 'GHS', 'NGN', 'ZAR', 'XOF'].filter(c => c !== (config.reportingCurrency || 'USD')).map(curr => {
+                  const rate = getExchangeRate(config.reportingCurrency || 'USD', curr).toFixed(4);
+
+                  return (
+                    <div key={curr} className="p-3 bg-slate-50 border rounded-xl flex justify-between items-center group hover:bg-white transition-colors">
+                      <span className="text-xs font-black text-slate-500">{curr}</span>
+                      <span className="font-mono text-xs font-bold text-emerald-600">{rate}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-muted-foreground font-medium italic">
+                * FX rates are synchronized globally and updated daily in real-time.
+              </p>
             </div>
 
           </CardContent>

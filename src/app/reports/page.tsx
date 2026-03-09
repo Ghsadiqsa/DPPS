@@ -175,12 +175,51 @@ export default function ReportsEngineElite() {
 
         {/* RECONCILED KPI STRIP */}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-          <ReportMetricCard label="Volume" value={summary.totalChecked} sub="Records Audited" icon={Activity} />
-          <ReportMetricCard label="Prevented" value={formatCurrency(summary.prevented?.value)} sub={`${summary.prevented?.count || 0} Blocked`} color="indigo" icon={ShieldAlert} />
-          <ReportMetricCard label="Leakage" value={formatCurrency(summary.leakage?.value)} sub={`${summary.leakage?.count || 0} Detected`} color="rose" icon={Lock} />
-          <ReportMetricCard label="Recovered" value={formatCurrency(summary.recovered?.value)} sub={`${summary.recovered?.count || 0} Cash Back`} color="emerald" icon={TrendingUp} />
-          <ReportMetricCard label="Leakage Rate" value={`${(summary.leakageRate || 0).toFixed(2)}%`} sub="Duplicate %" color="rose" />
-          <ReportMetricCard label="Recovery Eff." value={`${(summary.recoveryEfficiency || 0).toFixed(1)}%`} sub="Collection Strength" color="emerald" />
+          <ReportMetricCard
+            label="Volume"
+            value={summary.totalChecked}
+            sub="Records Audited"
+            icon={Activity}
+            tooltip="The total count of unique invoices processed and risk-scored by the DPPS engine within the selected date range."
+          />
+          <ReportMetricCard
+            label="Prevented"
+            value={formatCurrency(summary.prevented?.value, data?.metadata?.reportingCurrency)}
+            sub={`${summary.prevented?.count || 0} Blocked`}
+            color="indigo"
+            icon={ShieldAlert}
+            tooltip="Total financial value of confirmed duplicates that were successfully blocked before payment was issued."
+          />
+          <ReportMetricCard
+            label="Leakage"
+            value={formatCurrency(summary.leakage?.value, data?.metadata?.reportingCurrency)}
+            sub={`${summary.leakage?.count || 0} Detected`}
+            color="rose"
+            icon={Lock}
+            tooltip="Duplicates that were identified after payment had already been made, typically discovered during historical data synchronization."
+          />
+          <ReportMetricCard
+            label="Recovered"
+            value={formatCurrency(summary.recovered?.value, data?.metadata?.reportingCurrency)}
+            sub={`${summary.recovered?.count || 0} Cash Back`}
+            color="emerald"
+            icon={TrendingUp}
+            tooltip="Total value of funds successfully clawed back from vendors following the resolution of a recovery case."
+          />
+          <ReportMetricCard
+            label="Leakage Rate"
+            value={`${(summary.leakageRate || 0).toFixed(2)}%`}
+            sub="Duplicate %"
+            color="rose"
+            tooltip="The percentage of your total payment volume that resulted in a duplicate payment. A key indicator of AP process health."
+          />
+          <ReportMetricCard
+            label="Recovery Eff."
+            value={`${(summary.recoveryEfficiency || 0).toFixed(1)}%`}
+            sub="Collection Strength"
+            color="emerald"
+            tooltip="Measures the success rate of recovering leaked funds. Calculated as (Recovered Value / Total Leakage Value)."
+          />
         </div>
 
         {/* MAIN DATA GRID (TanStack Equivalent) */}
@@ -272,8 +311,17 @@ export default function ReportsEngineElite() {
                       </TableCell>
                       <TableCell className="text-right pr-8">
                         <div className="flex flex-col items-end">
-                          <span className="font-black text-slate-900 text-lg tracking-tight">{formatCurrency(Number(item.amount))}</span>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{item.currency || 'USD'}</span>
+                          <span className="font-black text-slate-900 text-lg tracking-tight">
+                            {formatCurrency(Number(data?.metadata?.showSideBySideAmounts ? item.amountInReportingCurrency : item.amount), data?.metadata?.reportingCurrency || item.currency || 'USD')}
+                          </span>
+                          {data?.metadata?.showSideBySideAmounts && (
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                              Original: {formatCurrency(Number(item.amount), item.currency || 'USD')}
+                            </span>
+                          )}
+                          {!data?.metadata?.showSideBySideAmounts && (
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{item.currency || 'USD'}</span>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -321,7 +369,7 @@ export default function ReportsEngineElite() {
   );
 }
 
-function ReportMetricCard({ label, value, sub, icon: Icon, color = "slate" }: any) {
+function ReportMetricCard({ label, value, sub, icon: Icon, color = "slate", tooltip }: any) {
   const colors: any = {
     slate: "text-slate-900 bg-white border-slate-200",
     indigo: "text-indigo-700 bg-indigo-50/50 border-indigo-100",
@@ -339,7 +387,21 @@ function ReportMetricCard({ label, value, sub, icon: Icon, color = "slate" }: an
     <Card className={cn("shadow-sm border-2 rounded-[28px] overflow-hidden group hover:shadow-xl transition-all duration-500", colors[color])}>
       <CardContent className="p-6 flex flex-col justify-center gap-1 relative">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[10px] font-black uppercase tracking-widest opacity-60 leading-none">{label}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest opacity-60 leading-none">{label}</span>
+            {tooltip && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-3.5 w-3.5 text-slate-300 hover:text-indigo-500 cursor-help transition-colors" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="bg-slate-900 text-white border-0 text-[10px] font-bold p-3 rounded-xl max-w-[200px]">
+                    {tooltip}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
           <div className={cn("p-1.5 rounded-lg text-white shadow-lg opacity-0 transition-opacity group-hover:opacity-100", accent[color])}>
             {Icon && <Icon className="h-3 w-3" />}
           </div>
