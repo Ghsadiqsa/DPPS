@@ -29,8 +29,8 @@ import {
   FileText
 } from "lucide-react";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { format, subYears } from "date-fns";
-import { toast } from "sonner";
+import { format, subYears, subDays, startOfMonth, startOfYear, subMonths } from "date-fns";
+import { toast } from "@/lib/toast";
 import { useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 
@@ -129,6 +129,35 @@ export default function ReportsEngineElite() {
           </div>
 
           <div className="flex-grow max-w-5xl flex items-center gap-3 bg-slate-100/50 p-1.5 rounded-2xl border border-slate-200/60">
+            <Select onValueChange={(val) => {
+              const today = new Date();
+              let from = new Date();
+              if (val === '7d') from = subDays(today, 7);
+              else if (val === '30d') from = subDays(today, 30);
+              else if (val === '90d') from = subDays(today, 90);
+              else if (val === 'ytd') from = startOfYear(today);
+              else if (val === '1y') from = subYears(today, 1);
+              else if (val === 'all') from = subYears(today, 10);
+
+              if (val !== 'custom') {
+                setFilters({ ...filters, dateRange: { from: format(from, 'yyyy-MM-dd'), to: format(today, 'yyyy-MM-dd') } });
+              }
+            }}>
+              <SelectTrigger className="h-10 w-[140px] bg-white border-slate-200 rounded-xl text-xs font-bold shadow-sm">
+                <Calendar className="h-4 w-4 mr-2 text-indigo-500" />
+                <SelectValue placeholder="Custom Range" />
+              </SelectTrigger>
+              <SelectContent className="rounded-xl">
+                <SelectItem value="7d">Last 7 Days</SelectItem>
+                <SelectItem value="30d">Last 30 Days</SelectItem>
+                <SelectItem value="90d">Last 90 Days</SelectItem>
+                <SelectItem value="ytd">Year to Date (YTD)</SelectItem>
+                <SelectItem value="1y">Trailing 1 Year</SelectItem>
+                <SelectItem value="all">All Time</SelectItem>
+                <SelectItem value="custom">Custom...</SelectItem>
+              </SelectContent>
+            </Select>
+
             <div className="flex gap-1 bg-white p-1 rounded-xl shadow-inner border">
               <Input
                 type="date"
@@ -245,7 +274,7 @@ export default function ReportsEngineElite() {
             <Table>
               <TableHeader className="bg-slate-50/80 border-b border-slate-100">
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="py-6 pl-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Master Transaction ID</TableHead>
+                  <TableHead className="py-6 pl-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Invoice Number</TableHead>
                   <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Entity Context</TableHead>
                   <TableHead className="text-center text-[10px] font-black uppercase text-slate-500 tracking-widest">Risk Analysis</TableHead>
                   <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Control Status</TableHead>

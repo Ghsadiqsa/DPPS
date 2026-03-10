@@ -77,6 +77,7 @@ export async function detectDuplicates(items: DetectionItem[]): Promise<Detectio
         const historicalInvoices = await db.select().from(invoices).where(
             and(
                 eq(invoices.companyCode, item.companyCode),
+                eq(invoices.sourceType, 'HISTORICAL'),
                 or(
                     and(
                         eq(invoices.vendorCode, item.vendorCode),

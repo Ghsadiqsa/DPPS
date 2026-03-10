@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { formatCurrency, convertCurrency } from "@/lib/currency";
 import { useConfig } from "@/components/providers/ConfigProvider";

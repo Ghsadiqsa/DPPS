@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
             const existing = await db.select().from(invoices).where(
                 and(
                     eq(invoices.invoiceNumber, item.invoiceNumber),
-                    eq(invoices.vendorCode, item.vendorCode),
+                    eq(invoices.vendorCode, item.vendorCode || item.vendorId || 'V-UNK'),
                     eq(invoices.sourceType, 'PROPOSAL')
                 )
             ).limit(1);
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
                     proposalId: proposalId || null,
                     erpType: 'SAP', // default or from item
                     companyCode: item.companyCode || '1000',
-                    vendorCode: item.vendorCode,
+                    vendorCode: item.vendorCode || item.vendorId || 'V-UNK',
                     vendorId: actualVendorId,
                     invoiceNumber: item.invoiceNumber,
                     grossAmount: String(item.amount) as any,

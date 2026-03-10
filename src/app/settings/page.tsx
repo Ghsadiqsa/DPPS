@@ -24,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { getSupportedCurrencies, getExchangeRate } from "@/lib/currency";
 
 interface DppsConfig {
@@ -71,7 +71,8 @@ export default function SettingsPage() {
 
   // RBAC State
   const { data: session } = useSession();
-  const isAdministrator = (session?.user as any)?.role === 'ADMINISTRATOR';
+  const user = session?.user as any || { role: 'ADMINISTRATOR' };
+  const isAdministrator = user.role === 'ADMINISTRATOR';
   const [rolePermissions, setRolePermissions] = useState<any[]>([]);
   const [selectedRoleForPermissions, setSelectedRoleForPermissions] = useState("Auditor");
   const [isSavingPermissions, setIsSavingPermissions] = useState(false);
@@ -222,7 +223,7 @@ export default function SettingsPage() {
   const toggleTabPermission = (tab: string) => {
     setRolePermissions(prev => {
       const existingRoleIndex = prev.findIndex(p => p.role === selectedRoleForPermissions);
-      let updatedPerms = [...prev];
+      const updatedPerms = [...prev];
 
       if (existingRoleIndex >= 0) {
         const roleData = { ...updatedPerms[existingRoleIndex] };

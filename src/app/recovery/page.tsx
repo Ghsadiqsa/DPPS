@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Download, Mail, Loader2, Send, History, AlertCircle } from "lucide-react";
 import { useState, useEffect } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/currency";
 import { useConfig } from "@/components/providers/ConfigProvider";

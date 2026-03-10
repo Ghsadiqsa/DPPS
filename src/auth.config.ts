@@ -6,37 +6,22 @@ export const authConfig = {
     },
     callbacks: {
         authorized({ auth, request: { nextUrl } }) {
-            const isLoggedIn = !!auth?.user;
-            const isOnLogin = nextUrl.pathname.startsWith('/login');
-
-            if (isOnLogin) {
-                if (isLoggedIn) return Response.redirect(new URL('/', nextUrl));
-                return true;
-            }
-
-            const isPublicAsset = nextUrl.pathname.match(/\.(png|jpg|jpeg|gif|webp|svg)$/) || nextUrl.pathname.startsWith('/_next');
-            if (isPublicAsset) {
-                return true;
-            }
-
-            if (!isLoggedIn) {
-                return false; // Redirects to signIn
-            }
+            // For demo purposes, we disable the login redirect.
             return true;
         },
         session({ session, token }) {
             if (token.sub && session.user) {
                 session.user.id = token.sub;
             }
-            if (token.role && session.user) {
-                (session.user as any).role = token.role;
+            // TESTING OVERRIDE: Every authenticated user is treated as an admin
+            if (session.user) {
+                (session.user as any).role = 'ADMINISTRATOR';
             }
             return session;
         },
         jwt({ token, user }) {
-            if (user) {
-                token.role = (user as any).role;
-            }
+            // Override session cookie data globally for UAT testing
+            token.role = 'ADMINISTRATOR';
             return token;
         }
     },

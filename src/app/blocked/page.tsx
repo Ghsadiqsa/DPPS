@@ -15,7 +15,7 @@ import {
 import { Search, Filter, ArrowRight, AlertCircle, MoreHorizontal, Lock } from "lucide-react";
 import { useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { formatCurrency } from "@/lib/currency";

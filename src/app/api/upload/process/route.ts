@@ -4,6 +4,7 @@ import { ERPType, EntityType } from "@/lib/erp-templates";
 import { db } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { uploadBatches, historicalStaging } from "@/lib/schema";
+import { logger } from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
     const batchRef: { id: string | null } = { id: null };
@@ -117,7 +118,12 @@ export async function POST(request: NextRequest) {
                 .set({ status: "pending_review", errorRows: 0 })
                 .where(eq(uploadBatches.id, batch.id));
         } catch (stagingErr: any) {
-            console.error(`[Upload] Staging failed for batch ${batch.id}:`, stagingErr);
+            logger.error({
+                message: "Staging database failure during upload",
+                action: "UPLOAD_PROCESS_STAGING",
+                batchId: batch.id,
+                error: stagingErr
+            });
             await db.update(uploadBatches)
                 .set({ status: "error", errorRows: data.length })
                 .where(eq(uploadBatches.id, batch.id));
@@ -132,7 +138,11 @@ export async function POST(request: NextRequest) {
         }, { status: 200 });
 
     } catch (error: any) {
-        console.error("Error processing upload:", error);
+        logger.error({
+            message: "Fatal error processing upload batch",
+            action: "UPLOAD_PROCESS",
+            error
+        });
         // Attempt to mark batch as error if it was created
         if (batchRef.id) {
             try {

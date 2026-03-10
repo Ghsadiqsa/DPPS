@@ -49,7 +49,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { format, subDays, startOfMonth } from "date-fns";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 // --- Types ---
 interface DashboardSummary {
@@ -82,7 +82,7 @@ export default function RiskCommandCenterElite() {
 
   // 1. Global Filter State
   const [filters, setFilters] = useState({
-    startDate: format(subDays(new Date(), 90), 'yyyy-MM-dd'),
+    startDate: format(subDays(new Date(), 180), 'yyyy-MM-dd'),
     endDate: format(new Date(), 'yyyy-MM-dd'),
     erpType: '',
     companyCode: '',
@@ -106,7 +106,8 @@ export default function RiskCommandCenterElite() {
       const res = await fetch(`/api/dashboard/summary?${params.toString()}`);
       if (!res.ok) throw new Error('Failed to fetch dashboard summary');
       return res.json();
-    }
+    },
+    refetchInterval: 10000, // Real-time polling every 10 seconds
   });
 
   const handleExport = async () => {
@@ -250,7 +251,7 @@ export default function RiskCommandCenterElite() {
               variant="indigo"
               icon={<ShieldCheck className="h-5 w-5" />}
               tooltip="Total spend successfully saved by blocking duplicates before they reached the ERP payment cycle."
-              onClick={() => setDrilldown({ open: true, title: "Capital Prevented Drilldown", filterKey: "lifecycleState", filterValue: "BLOCKED" })}
+              onClick={() => setDrilldown({ open: true, title: "Capital Prevented Drilldown", filterKey: "lifecycleState", filterValue: "CONFIRMED_DUPLICATE" })}
             />
             <MetricHeroCard
               title="Leakage Detected"
@@ -260,7 +261,7 @@ export default function RiskCommandCenterElite() {
               variant="rose"
               icon={<Lock className="h-5 w-5" />}
               tooltip="Duplicates identified after payment. These records require manual recovery actions."
-              onClick={() => setDrilldown({ open: true, title: "Leakage Identified Drilldown", filterKey: "lifecycleState", filterValue: "PAID_DUPLICATE" })}
+              onClick={() => setDrilldown({ open: true, title: "Leakage Identified Drilldown", filterKey: "lifecycleState", filterValue: "RECOVERY_OPENED,RECOVERY_RESOLVED" })}
             />
             <MetricHeroCard
               title="Net Protected Impact"
@@ -380,7 +381,7 @@ export default function RiskCommandCenterElite() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {workflow.map((w: any) => (
+                  {workflow.map((w: { state: string, count: number, value: number }) => (
                     <TableRow key={w.state} className="group hover:bg-slate-50 transition-colors border-b last:border-0 border-slate-100/50">
                       <TableCell className="py-5 pl-8">
                         <div className="flex items-center gap-4">
@@ -417,7 +418,7 @@ export default function RiskCommandCenterElite() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {riskConcentration.map((v: any, i: number) => (
+                  {riskConcentration.map((v: { vendor_code: string, risk_band: string, total_value: number }, i: number) => (
                     <TableRow key={i} className="group hover:bg-slate-50 transition-colors border-b last:border-0 border-slate-100/50">
                       <TableCell className="py-5 pl-8">
                         <div className="flex items-center gap-3">
@@ -477,8 +478,19 @@ export default function RiskCommandCenterElite() {
 
 // --- Internal Components ---
 
-function MetricHeroCard({ title, label, value, subValue, variant, icon, tooltip, onClick }: any) {
-  const variants: any = {
+interface MetricHeroCardProps {
+  title: string;
+  label: string;
+  value: string;
+  subValue: string;
+  variant: 'emerald' | 'indigo' | 'rose' | 'amber' | 'slate';
+  icon: React.ReactNode;
+  tooltip: string;
+  onClick?: () => void;
+}
+
+function MetricHeroCard({ title, label, value, subValue, variant, icon, tooltip, onClick }: MetricHeroCardProps) {
+  const variants: Record<string, string> = {
     emerald: "bg-emerald-600 text-white shadow-xl shadow-emerald-200/50 hover:bg-emerald-700 ring-emerald-500/20",
     indigo: "bg-indigo-600 text-white shadow-xl shadow-indigo-200/50 hover:bg-indigo-700 ring-indigo-500/20",
     rose: "bg-rose-600 text-white shadow-xl shadow-rose-200/50 hover:bg-rose-700 ring-rose-500/20",
@@ -529,7 +541,15 @@ function MetricHeroCard({ title, label, value, subValue, variant, icon, tooltip,
   );
 }
 
-function ControlMetricItem({ label, value, desc, progress, color }: any) {
+interface ControlMetricItemProps {
+  label: string;
+  value: string | number;
+  desc: string;
+  progress: number;
+  color: string;
+}
+
+function ControlMetricItem({ label, value, desc, progress, color }: ControlMetricItemProps) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-end">
@@ -548,22 +568,33 @@ function ControlMetricItem({ label, value, desc, progress, color }: any) {
 
 const getStateColor = (state: string) => {
   switch (state) {
-    case 'BLOCKED': return 'bg-rose-500';
-    case 'PAID_DUPLICATE': return 'bg-rose-400';
-    case 'POTENTIAL_DUPLICATE': return 'bg-amber-400';
+    case 'CONFIRMED_DUPLICATE': return 'bg-rose-600';
+    case 'RECOVERY_OPENED': return 'bg-rose-400';
+    case 'RECOVERY_RESOLVED': return 'bg-emerald-600';
+    case 'IN_INVESTIGATION': return 'bg-amber-500';
+    case 'FLAGGED_HIGH': return 'bg-rose-500';
+    case 'FLAGGED_MEDIUM': return 'bg-amber-400';
+    case 'FLAGGED_LOW': return 'bg-sky-400';
+    case 'NOT_DUPLICATE': return 'bg-emerald-400';
     case 'CLEARED': return 'bg-emerald-400';
-    case 'PAID': return 'bg-slate-300';
-    case 'RESOLVED': return 'bg-emerald-500';
+    case 'PAID_LEGITIMATE': return 'bg-slate-300';
     default: return 'bg-slate-400';
   }
 }
 
 // --- DRILLDOWN WORKBENCH COMPONENT ---
-function DrilldownWorkbench({ initialFilters, reportingCurrency }: { initialFilters: any, reportingCurrency?: string }) {
+function DrilldownWorkbench({ initialFilters, reportingCurrency }: { initialFilters: Record<string, string>, reportingCurrency?: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ['drilldown-elite', initialFilters],
     queryFn: async () => {
-      const params = new URLSearchParams(initialFilters);
+      const params = new URLSearchParams();
+      Object.entries(initialFilters).forEach(([k, v]) => {
+        if (typeof v === 'string' && v.includes(',')) {
+          v.split(',').forEach(val => params.append(k, val.trim()));
+        } else {
+          params.append(k, v as string);
+        }
+      });
       const res = await fetch(`/api/invoices?${params.toString()}`);
       if (!res.ok) throw new Error("Failed to fetch drilldown");
       return res.json();
@@ -572,7 +603,7 @@ function DrilldownWorkbench({ initialFilters, reportingCurrency }: { initialFilt
 
   if (isLoading) return <div className="space-y-6">{[1, 2, 3, 4, 5, 6].map(i => <div key={i} className="h-20 w-full animate-pulse bg-slate-200 rounded-3xl" />)}</div>;
 
-  const safeFormatDate = (dateStr: any) => {
+  const safeFormatDate = (dateStr: string | Date | null | undefined) => {
     if (!dateStr) return "-";
     try {
       const d = new Date(dateStr);
@@ -588,14 +619,14 @@ function DrilldownWorkbench({ initialFilters, reportingCurrency }: { initialFilt
       <Table>
         <TableHeader className="bg-slate-50 border-b border-slate-100/50">
           <TableRow>
-            <TableHead className="py-6 pl-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Master Transaction ID</TableHead>
+            <TableHead className="py-6 pl-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Invoice Number</TableHead>
             <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Entity Context</TableHead>
             <TableHead className="text-[10px] font-black uppercase text-slate-500 tracking-widest text-center">Lifecycle Date</TableHead>
             <TableHead className="text-right pr-8 text-[10px] font-black uppercase text-slate-500 tracking-widest">Gross Impact</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {data?.data?.map((inv: any) => (
+          {data?.data?.map((inv: { id: string, invoiceNumber: string, vendorName: string, vendorCode: string, updatedAt: string, amountInReportingCurrency: number, grossAmount: number, currency: string }) => (
             <TableRow key={inv.id} className="group hover:bg-slate-50/80 transition-all border-b last:border-0 border-slate-100/50">
               <TableCell className="py-6 pl-8">
                 <div className="flex items-center gap-3">
@@ -614,7 +645,7 @@ function DrilldownWorkbench({ initialFilters, reportingCurrency }: { initialFilt
                 </div>
               </TableCell>
               <TableCell className="text-center">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{safeFormatDate(inv.invoiceDate)}</p>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{safeFormatDate(inv.updatedAt)}</p>
               </TableCell>
               <TableCell className="text-right pr-8">
                 <div className="flex flex-col items-end">

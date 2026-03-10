@@ -22,8 +22,12 @@ export async function POST(request: NextRequest) {
             filters.push(inArray(invoices.riskBand, f.riskBands));
         }
 
-        if (f.dateRange?.from) filters.push(gte(invoices.invoiceDate, new Date(f.dateRange.from)));
-        if (f.dateRange?.to) filters.push(lte(invoices.invoiceDate, new Date(f.dateRange.to)));
+        if (f.dateRange?.from) filters.push(gte(invoices.createdAt, new Date(f.dateRange.from)));
+        if (f.dateRange?.to) {
+            const end = new Date(f.dateRange.to);
+            end.setHours(23, 59, 59, 999);
+            filters.push(lte(invoices.createdAt, end));
+        }
 
         if (f.search) {
             filters.push(or(
@@ -61,7 +65,7 @@ export async function POST(request: NextRequest) {
         const { convertCurrency } = await import("@/lib/currency");
 
         // CFO-Grade JS Aggregation
-        let totalChecked = allFilteredInvoices.length;
+        const totalChecked = allFilteredInvoices.length;
         let totalVal_Base = 0;
         let pCount = 0, pVal_Base = 0;
         let lCount = 0, lVal_Base = 0;

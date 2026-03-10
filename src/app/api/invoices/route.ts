@@ -53,8 +53,12 @@ export async function GET(request: NextRequest) {
             filters.push(inArray(invoices.lifecycleState, combinedStates));
         }
 
-        if (startDate) filters.push(gte(invoices.invoiceDate, new Date(startDate)));
-        if (endDate) filters.push(lte(invoices.invoiceDate, new Date(endDate)));
+        if (startDate) filters.push(gte(invoices.createdAt, new Date(startDate)));
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            filters.push(lte(invoices.createdAt, end));
+        }
 
         if (search) {
             filters.push(or(
@@ -85,7 +89,8 @@ export async function GET(request: NextRequest) {
             duplicateGroupId: invoices.duplicateGroupId,
             matchSource: invoices.matchSource,
             matchingReason: invoices.matchingReason,
-            systemComments: invoices.systemComments
+            systemComments: invoices.systemComments,
+            updatedAt: invoices.updatedAt
 
         })
             .from(invoices)
@@ -93,7 +98,7 @@ export async function GET(request: NextRequest) {
             .where(whereClause)
             .limit(limit)
             .offset(offset)
-            .orderBy(sql`${invoices.invoiceDate} DESC`);
+            .orderBy(sql`${invoices.createdAt} DESC`);
 
         // 2. Fetch Total Count for Pagination
         const countResult = await db.select({ count: sql`COUNT(*)` })

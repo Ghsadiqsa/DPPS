@@ -13,15 +13,15 @@ export async function GET() {
 
                 -- Active Flags: flagged or under investigation
                 COUNT(*) FILTER (WHERE lifecycle_state IN (
-                    'FLAGGED_HIGH','FLAGGED_MEDIUM','FLAGGED_LOW','IN_INVESTIGATION','CONFIRMED_DUPLICATE'
-                ) OR is_duplicate_candidate = true) as exposure_count,
+                    'FLAGGED_HIGH','FLAGGED_MEDIUM','FLAGGED_LOW','IN_INVESTIGATION'
+                ) OR (is_duplicate_candidate = true AND lifecycle_state NOT IN ('CONFIRMED_DUPLICATE', 'NOT_DUPLICATE', 'CLEARED', 'READY_FOR_RELEASE', 'RELEASED_TO_PAYMENT', 'PAID', 'RECOVERY_OPENED', 'RECOVERY_RESOLVED'))) as exposure_count,
                 COALESCE(SUM(gross_amount) FILTER (WHERE lifecycle_state IN (
-                    'FLAGGED_HIGH','FLAGGED_MEDIUM','FLAGGED_LOW','IN_INVESTIGATION','CONFIRMED_DUPLICATE'
-                ) OR is_duplicate_candidate = true), 0) as exposure_value,
+                    'FLAGGED_HIGH','FLAGGED_MEDIUM','FLAGGED_LOW','IN_INVESTIGATION'
+                ) OR (is_duplicate_candidate = true AND lifecycle_state NOT IN ('CONFIRMED_DUPLICATE', 'NOT_DUPLICATE', 'CLEARED', 'READY_FOR_RELEASE', 'RELEASED_TO_PAYMENT', 'PAID', 'RECOVERY_OPENED', 'RECOVERY_RESOLVED'))), 0) as exposure_value,
 
                 -- Prevented: stopped before payment
-                COUNT(*) FILTER (WHERE lifecycle_state IN ('CONFIRMED_DUPLICATE','NOT_DUPLICATE','READY_FOR_RELEASE')) as prevented_count,
-                COALESCE(SUM(gross_amount) FILTER (WHERE lifecycle_state IN ('CONFIRMED_DUPLICATE','NOT_DUPLICATE','READY_FOR_RELEASE')), 0) as prevented_value,
+                COUNT(*) FILTER (WHERE lifecycle_state = 'CONFIRMED_DUPLICATE') as prevented_count,
+                COALESCE(SUM(gross_amount) FILTER (WHERE lifecycle_state = 'CONFIRMED_DUPLICATE'), 0) as prevented_value,
 
                 -- In Investigation (Open Tasks)
                 COUNT(*) FILTER (WHERE lifecycle_state = 'IN_INVESTIGATION') as open_tasks,
@@ -64,14 +64,14 @@ export async function GET() {
         // ── 2. Daily trend (last 7 days by invoice date) ───────────────────────────
         const dailyResult: any = await db.execute(sql`
             SELECT
-                TO_CHAR(invoice_date, 'Dy') as name,
-                EXTRACT(DOW FROM invoice_date) as dow,
-                COALESCE(SUM(gross_amount) FILTER (WHERE lifecycle_state IN ('CONFIRMED_DUPLICATE','NOT_DUPLICATE','READY_FOR_RELEASE')), 0) as prevented,
+                TO_CHAR(created_at, 'Dy') as name,
+                EXTRACT(DOW FROM created_at) as dow,
+                COALESCE(SUM(gross_amount) FILTER (WHERE lifecycle_state = 'CONFIRMED_DUPLICATE'), 0) as prevented,
                 COALESCE(SUM(gross_amount) FILTER (WHERE is_duplicate_candidate = true), 0) as detected
             FROM invoices
-            WHERE invoice_date > NOW() - INTERVAL '7 days'
-            GROUP BY TO_CHAR(invoice_date, 'Dy'), EXTRACT(DOW FROM invoice_date)
-            ORDER BY EXTRACT(DOW FROM invoice_date)
+            WHERE created_at > NOW() - INTERVAL '7 days'
+            GROUP BY TO_CHAR(created_at, 'Dy'), EXTRACT(DOW FROM created_at)
+            ORDER BY EXTRACT(DOW FROM created_at)
         `);
         const monthlyData = (dailyResult.rows || []).map((r: any) => ({
             name: r.name,
@@ -104,7 +104,7 @@ export async function GET() {
             confirmedDuplicate: { count: exposureCount, amount: exposureValue },
         };
 
-        // ── 5. Recent activity (last 5 flagged/committed invoices) ─────────────────
+        // ── 5. Recent activity (all lifecycle statuses) ─────────────────
         const recentResult: any = await db.execute(sql`
             SELECT
                 i.invoice_number,
@@ -114,13 +114,9 @@ export async function GET() {
                 i.updated_at as created_at
             FROM invoices i
             LEFT JOIN vendors v ON v.id = i.vendor_id
-            WHERE i.lifecycle_state IN (
-                'FLAGGED_HIGH','FLAGGED_MEDIUM','FLAGGED_LOW',
-                'IN_INVESTIGATION','CONFIRMED_DUPLICATE',
-                'NOT_DUPLICATE','READY_FOR_RELEASE','RELEASED_TO_PAYMENT'
-            )
+            WHERE i.lifecycle_state IS NOT NULL
             ORDER BY i.updated_at DESC
-            LIMIT 5
+            LIMIT 50
         `);
         const recentActivity = (recentResult.rows || []).map((r: any) => ({
             invoiceNumber: r.invoice_number,

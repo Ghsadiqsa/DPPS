@@ -23,6 +23,7 @@ export async function GET(
             currency: invoices.currency,
             vendorCode: invoices.vendorCode,
             vendorId: invoices.vendorId,
+            dbVendorCode: vendors.vendorCode,
             vendorName: vendors.name,
             lifecycleState: invoices.lifecycleState,
             riskScore: invoices.riskScore,
@@ -53,10 +54,11 @@ export async function GET(
         //    Find best historical candidate by same vendor + similar amount
         let matched: any = null;
 
-        if (flagged.vendorId) {
+        if (flagged.vendorId || flagged.vendorCode || flagged.dbVendorCode) {
             const amount = parseFloat(String(flagged.grossAmount)) || 0;
             const low = (amount * 0.99).toFixed(2);
             const high = (amount * 1.01).toFixed(2);
+            const vc = flagged.dbVendorCode || flagged.vendorCode;
 
             const candidates = await db.select({
                 id: invoices.id,
@@ -67,6 +69,7 @@ export async function GET(
                 currency: invoices.currency,
                 vendorCode: invoices.vendorCode,
                 vendorId: invoices.vendorId,
+                dbVendorCode: vendors.vendorCode,
                 vendorName: vendors.name,
                 lifecycleState: invoices.lifecycleState,
                 riskScore: invoices.riskScore,
@@ -81,9 +84,15 @@ export async function GET(
                 .from(invoices)
                 .leftJoin(vendors, eq(invoices.vendorId, vendors.id))
                 .where(and(
-                    eq(invoices.vendorId, flagged.vendorId),
                     ne(invoices.id, id),
-                    sql`${invoices.grossAmount} BETWEEN ${low} AND ${high}`
+                    eq(invoices.sourceType, 'HISTORICAL'),
+                    or(
+                        eq(invoices.invoiceNumber, flagged.invoiceNumber),
+                        and(
+                            eq(invoices.vendorCode, vc),
+                            sql`CAST(${invoices.grossAmount} AS NUMERIC) BETWEEN ${low} AND ${high}`
+                        )
+                    )
                 ))
                 .limit(5)
                 .orderBy(sql`${invoices.invoiceDate} DESC`);
@@ -127,8 +136,8 @@ function computeComparison(flagged: any, matched: any) {
         {
             key: 'vendorCode',
             label: 'Vendor Code',
-            flaggedVal: flagged.vendorCode,
-            matchedVal: matched.vendorCode,
+            flaggedVal: flagged.dbVendorCode || flagged.vendorCode || "—",
+            matchedVal: matched.dbVendorCode || matched.vendorCode || "—",
         },
         {
             key: 'vendorName',

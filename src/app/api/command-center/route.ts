@@ -128,7 +128,7 @@ export async function GET(request: NextRequest) {
         `);
 
         // We'll aggregate this strictly in the UI or process here.
-        let detectionTypes = {
+        const detectionTypes = {
             'exact_match': 0,
             'fuzzy_invoice_pattern': 0,
             'vendor_match': 0,

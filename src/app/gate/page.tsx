@@ -39,7 +39,7 @@ import {
   FileBox,
   RefreshCcw
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
@@ -590,6 +590,10 @@ export default function PaymentGateElite() {
                                   <div className="flex items-center gap-2">
                                     <span className="font-black text-slate-900">{dup.invoiceNumber}</span>
                                     <Badge variant="outline" className="text-[9px] font-black uppercase text-slate-400 border-slate-100">{dup.vendorId}</Badge>
+                                    <Badge variant="outline" className="text-[9px] font-black uppercase text-slate-500 border-slate-200 flex items-center gap-1">
+                                      <Calendar className="h-2.5 w-2.5" />
+                                      {dup.invoiceDate ? format(new Date(dup.invoiceDate), 'MMM dd, yyyy') : 'N/A'}
+                                    </Badge>
                                   </div>
                                   <div className="flex flex-col items-end mt-1">
                                     <span className="text-[10px] font-black text-slate-900">
@@ -820,7 +824,7 @@ export default function PaymentGateElite() {
             <table className="w-full text-left text-xs border-collapse">
               <thead className="sticky top-0 bg-slate-50 border-b border-slate-100 z-10">
                 <tr>
-                  {["Score", "Group ID", "Invoice #", "Vendor", "Amount", "Match Source", "Matching Reason", "Actions"].map(h => (
+                  {["Score", "Group ID", "Invoice #", "Vendor", "Date", "Amount", "Match Source", "Matching Reason", "Actions"].map(h => (
                     <th key={h} className="p-4 font-black text-slate-400 uppercase tracking-widest text-[9px]">{h}</th>
                   ))}
                 </tr>
@@ -870,6 +874,7 @@ export default function PaymentGateElite() {
                           )}
                         </td>
                         <td className="p-4 text-slate-600 font-bold">{master.vendorId}</td>
+                        <td className="p-4 text-slate-500 font-bold whitespace-nowrap">{master.invoiceDate ? format(new Date(master.invoiceDate), 'MMM dd, yyyy') : 'N/A'}</td>
                         <td className="p-4 font-black text-slate-900">{formatCurrency(master.amount)}</td>
                         <td className="p-4">
                           <Badge className={cn(
@@ -932,6 +937,7 @@ export default function PaymentGateElite() {
                           <td className="p-4 font-mono text-[9px] text-slate-400">Submodule</td>
                           <td className="p-4 font-black text-slate-900">{child.invoiceNumber}</td>
                           <td className="p-4 text-slate-600">{child.vendorId}</td>
+                          <td className="p-4 text-slate-500 text-xs whitespace-nowrap">{child.invoiceDate ? format(new Date(child.invoiceDate), 'MMM dd, yyyy') : 'N/A'}</td>
                           <td className="p-4 font-bold text-slate-900">{formatCurrency(child.amount)}</td>
                           <td colSpan={3} className="p-4 text-[10px] text-slate-500 italic">
                             Linked via chain-match to Group {gid}

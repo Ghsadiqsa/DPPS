@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 
@@ -123,7 +123,7 @@ function DetailsPanel({
   onTransition,
   isTransitioning,
 }: {
-  item: any;
+  item: Record<string, any> | null;
   open: boolean;
   onClose: () => void;
   onTransition: (ids: string[], state: string, notes: string) => Promise<void>;
@@ -132,7 +132,8 @@ function DetailsPanel({
   const { data, isLoading, error } = useQuery({
     queryKey: ['invoice-compare', item?.id],
     queryFn: async () => {
-      const res = await fetch(`/api/invoices/${item.id}/compare`);
+      if (!item) return null;
+      const res = await fetch(`/api/invoices/${item?.id}/compare`);
       if (!res.ok) throw new Error('Failed to load comparison data');
       return res.json();
     },
@@ -143,7 +144,7 @@ function DetailsPanel({
   const score = item?.riskScore || 0;
   const matched = data?.matched;
   const flagged = data?.flagged;
-  const comparison: any[] = data?.comparison || [];
+  const comparison: Record<string, any>[] = data?.comparison || [];
   const exactCount = comparison.filter(r => r.similarity === 'exact').length;
   const nearCount = comparison.filter(r => r.similarity === 'near').length;
 
@@ -285,7 +286,7 @@ function DetailsPanel({
                     </tr>
                   </thead>
                   <tbody>
-                    {comparison.map((row: any, idx: number) => {
+                    {comparison.map((row: Record<string, any>, idx: number) => {
                       const s = SIM_STYLES[row.similarity] || SIM_STYLES.different;
                       const Icon = s.icon;
                       return (
@@ -377,7 +378,7 @@ function DetailsPanel({
 }
 
 // ─── Forensics score cell ─────────────────────────────────────────────────────
-function InvestigationForensics({ item, onOpenDetails }: { item: any; onOpenDetails: () => void }) {
+function InvestigationForensics({ item, onOpenDetails }: { item: Record<string, any>; onOpenDetails: () => void }) {
   const score = item.riskScore || 0;
   const band = scoreBand(score);
   return (
@@ -409,20 +410,22 @@ export default function AnalystWorkbench() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [search, setSearch] = useState("");
-  const [detailsItem, setDetailsItem] = useState<any>(null);
+  const [detailsItem, setDetailsItem] = useState<Record<string, any> | null>(null);
 
-  const { data: responseData, isLoading, refetch, isFetching } = useQuery<any>({
+  const { data: responseData, isLoading, refetch, isFetching } = useQuery<{ data: Record<string, any>[], metadata: any }>({
     queryKey: ["analyst-workbench", search],
     queryFn: async () => {
       const params = new URLSearchParams();
       params.append('lifecycleState', 'IN_INVESTIGATION');
       params.append('lifecycleState', 'FLAGGED_HIGH');
       params.append('lifecycleState', 'FLAGGED_MEDIUM');
+      params.append('lifecycleState', 'FLAGGED_LOW');
       if (search) params.append('search', search);
       const res = await fetch(`/api/invoices?${params.toString()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error("Failed to fetch workbench data");
       return res.json();
-    }
+    },
+    refetchInterval: 10000,
   });
 
   const invoices = responseData?.data || [];
@@ -458,7 +461,7 @@ export default function AnalystWorkbench() {
   const toggleSelect = (id: string) => setSelectedIds(prev => prev.includes(id) ? prev.filter((i: string) => i !== id) : [...prev, id]);
   const toggleSelectAll = () => {
     if (selectedIds.length === invoices?.length) setSelectedIds([]);
-    else setSelectedIds(invoices?.map((i: any) => i.id) || []);
+    else setSelectedIds(invoices?.map((i: Record<string, any>) => i.id) || []);
   };
 
   return (
@@ -572,25 +575,25 @@ export default function AnalystWorkbench() {
                   </TableCell>
                 </TableRow>
               ) : Object.entries(
-                (invoices || []).reduce((acc: any, item: any) => {
+                (invoices || []).reduce((acc: Record<string, Record<string, any>[]>, item: Record<string, any>) => {
                   const gid = item.duplicateGroupId || `UNGRP-${item.id}`;
                   if (!acc[gid]) acc[gid] = [];
                   acc[gid].push(item);
                   return acc;
                 }, {})
-              ).map(([gid, groupItems]: any) => {
+              ).map(([gid, groupItems]: [string, any]) => {
                 const master = groupItems[0];
                 return (
-                  <TableRow key={gid} className={cn("group hover:bg-slate-50/50 transition-colors border-b border-slate-100", groupItems.every((gi: any) => selectedIds.includes(gi.id)) && "bg-indigo-50/30")}>
+                  <TableRow key={gid} className={cn("group hover:bg-slate-50/50 transition-colors border-b border-slate-100", groupItems.every((gi: Record<string, any>) => selectedIds.includes(gi.id)) && "bg-indigo-50/30")}>
                     <TableCell className="pl-8 align-top py-6">
                       <Checkbox
-                        checked={groupItems.every((gi: any) => selectedIds.includes(gi.id))}
+                        checked={groupItems.every((gi: Record<string, any>) => selectedIds.includes(gi.id))}
                         onCheckedChange={() => {
-                          const allSelected = groupItems.every((gi: any) => selectedIds.includes(gi.id));
+                          const allSelected = groupItems.every((gi: Record<string, any>) => selectedIds.includes(gi.id));
                           if (allSelected) {
-                            setSelectedIds(prev => prev.filter(id => !groupItems.some((gi: any) => gi.id === id)));
+                            setSelectedIds(prev => prev.filter(id => !groupItems.some((gi: Record<string, any>) => gi.id === id)));
                           } else {
-                            const newIds = groupItems.filter((gi: any) => !selectedIds.includes(gi.id)).map((gi: any) => gi.id);
+                            const newIds = groupItems.filter((gi: Record<string, any>) => !selectedIds.includes(gi.id)).map((gi: Record<string, any>) => gi.id);
                             setSelectedIds(prev => [...prev, ...newIds]);
                           }
                         }}

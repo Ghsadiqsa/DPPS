@@ -18,8 +18,12 @@ export async function POST(request: NextRequest) {
         if (f.lifecycleState) filters.push(eq(invoices.lifecycleState, f.lifecycleState));
         if (f.riskBand) filters.push(eq(invoices.riskBand, f.riskBand));
 
-        if (f.startDate) filters.push(gte(invoices.invoiceDate, new Date(f.startDate)));
-        if (f.endDate) filters.push(lte(invoices.invoiceDate, new Date(f.endDate)));
+        if (f.dateRange?.from) filters.push(gte(invoices.createdAt, new Date(f.dateRange.from)));
+        if (f.dateRange?.to) {
+            const end = new Date(f.dateRange.to);
+            end.setHours(23, 59, 59, 999);
+            filters.push(lte(invoices.createdAt, end));
+        }
 
         if (f.search) {
             filters.push(or(

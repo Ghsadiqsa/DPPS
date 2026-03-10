@@ -35,9 +35,11 @@ import {
     Eye,
     DatabaseZap,
     RefreshCw,
-    Trash2
+    Trash2,
+    Terminal,
+    Lightbulb
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format as dateFormat } from "date-fns";
 import { formatCurrency } from "@/lib/currency";
@@ -62,6 +64,7 @@ export default function HistoricalLoad() {
     const [batchStatus, setBatchStatus] = useState<string | null>(null);
     const [previewRows, setPreviewRows] = useState<any[]>([]);
     const [previewColumns, setPreviewColumns] = useState<string[]>([]);
+    const [apiError, setApiError] = useState<{ message: string, solution: string } | null>(null);
 
     // Batch history selection
     const [selectedBatches, setSelectedBatches] = useState<Set<string>>(new Set());
@@ -162,6 +165,7 @@ export default function HistoricalLoad() {
 
         setStep('processing');
         setBatchStatus('Uploading and validating...');
+        setApiError(null);
 
         try {
             const formData = new FormData();
@@ -205,9 +209,22 @@ export default function HistoricalLoad() {
             setStep('preview');
             toast.success(`${records.length} records ready for review`);
 
+            toast.success(`${records.length} records ready for review`);
+
         } catch (err: any) {
-            toast.error("Upload Failed", { description: err.message });
+            const msg = err.message || "Unknown error";
+            let solution = "Please try again or contact support.";
+
+            if (msg.includes("no data rows")) solution = "Ensure your file contains data starting from row 3 (after the header and conceptual mapping rows), and the file is not empty.";
+            else if (msg.includes("Missing required fields")) solution = "Make sure an ERP system and Data Entity are selected before uploading the file.";
+            else if (msg.includes("Invalid JSON format")) solution = "The JSON file uploaded is malformed. Ensure it is a valid array of objects.";
+            else if (msg.includes("Failed to fetch")) solution = "Network connection failed. Verify your internet connection or backend server status.";
+            else if (msg.includes("stage records") || msg.includes("staging")) solution = "Database staging failed. Ensure the column headers exactly match the template requirements.";
+            else if (msg.includes("properties") || msg.includes("undefined")) solution = "Frontend rendering failed while trying to process the file structure. Ensure your file has valid column headers.";
+
+            setApiError({ message: msg, solution });
             setStep('configure');
+            toast.error("Upload Failed", { description: "Review the diagnostics panel for more information." });
         }
     };
 
@@ -245,6 +262,7 @@ export default function HistoricalLoad() {
         setFile(null);
         setBatchId(null);
         setBatchStatus(null);
+        setApiError(null);
         setPreviewRows([]);
         setPreviewColumns([]);
     };
@@ -387,10 +405,39 @@ export default function HistoricalLoad() {
                                     <input type="file" id="file-upload" className="hidden" accept=".csv,.xlsx,.xls,.xml,.json" onChange={(e) => setFile(e.target.files?.[0] || null)} />
                                 </div>
 
+                                {apiError && (
+                                    <div className="rounded-[24px] border-rose-200/50 shadow-2xl shadow-rose-900/5 bg-white overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                        <div className="bg-rose-50/50 border-b border-rose-100/60 p-5 flex flex-col gap-2">
+                                            <span className="text-[10px] font-black uppercase text-rose-500 tracking-widest flex items-center gap-2">
+                                                <Terminal className="h-4 w-4" /> Diagnostic API Error
+                                            </span>
+                                            <p className="font-mono text-sm text-rose-900 font-bold bg-white p-4 rounded-xl border border-rose-100 shadow-sm break-all">
+                                                {apiError.message}
+                                            </p>
+                                        </div>
+                                        <div className="p-5">
+                                            <div className="bg-emerald-50/50 border border-emerald-200/60 rounded-2xl p-4 relative overflow-hidden shadow-sm">
+                                                <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500" />
+                                                <div className="flex items-start gap-4">
+                                                    <div className="p-2 bg-emerald-100 rounded-lg shrink-0 mt-0.5">
+                                                        <Lightbulb className="h-5 w-5 text-emerald-600" />
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="font-black text-slate-900 text-[10px] uppercase tracking-widest mb-1.5">Automated Solution</h3>
+                                                        <p className="text-emerald-950 font-medium text-xs leading-relaxed">
+                                                            {apiError.solution}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
                                 <Button
                                     onClick={handleSubmit}
                                     disabled={!file}
-                                    className="w-full h-14 rounded-xl text-base font-bold bg-slate-700 hover:bg-slate-800 text-white disabled:opacity-40 transition-all"
+                                    className="w-full h-14 rounded-xl text-base font-bold bg-slate-700 hover:bg-slate-800 text-white disabled:opacity-40 transition-all shadow-xl shadow-slate-200"
                                 >
                                     Submit File
                                 </Button>

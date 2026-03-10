@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeTransition, LifecycleState } from "@/lib/transition";
 import { auth } from "@/auth";
+import { logger } from "@/lib/logger";
 
 export async function POST(request: NextRequest) {
     try {
@@ -33,6 +34,14 @@ export async function POST(request: NextRequest) {
                 });
                 results.push(result.id);
             } catch (error: any) {
+                logger.warn({
+                    message: "Partial transition failure for invoice",
+                    action: "INVOICE_TRANSITION_PARTIAL",
+                    userId,
+                    invoiceId,
+                    targetStatus,
+                    error
+                });
                 errors.push({ invoiceId, message: error.message });
             }
         }
@@ -56,7 +65,11 @@ export async function POST(request: NextRequest) {
         });
 
     } catch (error) {
-        console.error("Critical error in transition API:", error);
+        logger.error({
+            message: "Critical error in global transition API",
+            action: "INVOICE_TRANSITION_CRITICAL",
+            error
+        });
         return NextResponse.json({ error: "State transition failed due to internal validation." }, { status: 500 });
     }
 }

@@ -123,15 +123,27 @@ export function detectDuplicate(
         value: `${(invoiceSimilarity * 100).toFixed(1)}%`,
     });
 
-    // 4. Date Proximity (supplementary signal - doesn't add to score)
+    // 4. Date Proximity (Mathematical Contributor & Signal)
     const date1 = new Date(currentInvoice.invoiceDate);
     const date2 = new Date(candidateInvoice.invoiceDate);
-    const daysDiff = Math.abs(date1.getTime() - date2.getTime()) / (1000 * 60 * 60 * 24);
-    const dateProximityTriggered = daysDiff <= config.dateProximityDays;
+    let daysDiff = 0;
+    let dateProximityTriggered = false;
+
+    if (!isNaN(date1.getTime()) && !isNaN(date2.getTime())) {
+        daysDiff = Math.abs(date1.getTime() - date2.getTime()) / (1000 * 60 * 60 * 24);
+        dateProximityTriggered = daysDiff <= config.dateProximityDays;
+
+        if (daysDiff === 0) {
+            score += 10; // Exact same date adds 10 points
+        } else if (dateProximityTriggered) {
+            score += 5; // Close dates add 5 points
+        }
+    }
+
     signals.push({
         name: 'Date Proximity',
         triggered: dateProximityTriggered,
-        description: `Invoice dates within ${config.dateProximityDays} days`,
+        description: `Invoice dates within ${config.dateProximityDays} days (+points applied)`,
         value: `${Math.round(daysDiff)} days apart`,
     });
 

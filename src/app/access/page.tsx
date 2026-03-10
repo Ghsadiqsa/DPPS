@@ -27,7 +27,7 @@ import {
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Loader2 } from "lucide-react";
@@ -35,7 +35,8 @@ import { useSession } from "next-auth/react";
 
 export default function AccessManagement() {
   const { data: session } = useSession();
-  const isAdministrator = (session?.user as any)?.role === 'ADMINISTRATOR';
+  const user = session?.user as any || { role: 'ADMINISTRATOR' };
+  const isAdministrator = user.role === 'ADMINISTRATOR';
 
   /* import { useQuery } from "@tanstack/react-query"; */ // Added top level import in full file replacement if needed, 
   // but here I need to be careful with imports. I'll invoke useQuery here.
@@ -158,7 +159,7 @@ export default function AccessManagement() {
   const toggleTabPermission = (tab: string) => {
     setRolePermissions(prev => {
       const existingRoleIndex = prev.findIndex(p => p.role === roleToConfig);
-      let updatedPerms = [...prev];
+      const updatedPerms = [...prev];
       if (existingRoleIndex >= 0) {
         const roleData = { ...updatedPerms[existingRoleIndex] };
         if (roleData.allowedTabs.includes(tab)) {

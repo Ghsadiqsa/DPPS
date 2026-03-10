@@ -3,6 +3,8 @@ import { db } from "@/lib/db";
 import { invoices, dppsConfig } from "@/lib/schema";
 import { sql, and, gte, lte, eq } from "drizzle-orm";
 import { convertCurrency } from "@/lib/currency";
+import { format } from "date-fns";
+import { logger } from "@/lib/logger";
 
 export async function GET(request: NextRequest) {
     try {
@@ -30,8 +32,12 @@ export async function GET(request: NextRequest) {
 
         // 2. Build Base Conditions
         const conditions = [];
-        if (startDate) conditions.push(gte(invoices.invoiceDate, new Date(startDate)));
-        if (endDate) conditions.push(lte(invoices.invoiceDate, new Date(endDate)));
+        if (startDate) conditions.push(gte(invoices.createdAt, new Date(startDate)));
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            conditions.push(lte(invoices.createdAt, end));
+        }
         if (erpType && erpType !== "all") conditions.push(eq(invoices.erpType, erpType));
         if (companyCode && companyCode !== "all") conditions.push(eq(invoices.companyCode, companyCode));
         if (currency && currency !== "all") conditions.push(eq(invoices.currency, currency));
@@ -43,12 +49,13 @@ export async function GET(request: NextRequest) {
             grossAmount: invoices.grossAmount,
             currency: invoices.currency,
             lifecycleState: invoices.lifecycleState,
-            isDuplicateCandidate: invoices.isDuplicateCandidate
+            isDuplicateCandidate: invoices.isDuplicateCandidate,
+            createdAt: invoices.createdAt
         })
             .from(invoices)
             .where(whereClause);
 
-        let totalVolume = invoicesData.length;
+        const totalVolume = invoicesData.length;
         let totalVal_Base = 0;
         let expVal_Base = 0, expCount = 0;
         let prevVal_Base = 0, prevCount = 0;
@@ -59,8 +66,14 @@ export async function GET(request: NextRequest) {
             const val_Base = convertCurrency(Number(inv.grossAmount), inv.currency || 'USD', reportingCurrency);
             totalVal_Base += val_Base;
 
-            const isExposure = ['FLAGGED_HIGH', 'FLAGGED_MEDIUM', 'FLAGGED_LOW', 'IN_INVESTIGATION', 'CONFIRMED_DUPLICATE'].includes(inv.lifecycleState || '') || inv.isDuplicateCandidate;
-            if (isExposure) {
+            // 3a. Metrics Buckets (Auditor Precision)
+            // An "Open Exposure" is an invoice that is flagged or in investigation,
+            // OR any duplicate candidate that hasn't been finalized (Confirmed, Cleared, Recovered, etc.)
+            const resolvedStates = ['CONFIRMED_DUPLICATE', 'RECOVERY_OPENED', 'RECOVERY_RESOLVED', 'NOT_DUPLICATE', 'CLEARED', 'READY_FOR_RELEASE', 'RELEASED_TO_PAYMENT'];
+            const isOpenExposure = ['FLAGGED_HIGH', 'FLAGGED_MEDIUM', 'FLAGGED_LOW', 'IN_INVESTIGATION'].includes(inv.lifecycleState || '') ||
+                (inv.isDuplicateCandidate && !resolvedStates.includes(inv.lifecycleState || ''));
+
+            if (isOpenExposure) {
                 expCount++;
                 expVal_Base += val_Base;
             }
@@ -70,7 +83,7 @@ export async function GET(request: NextRequest) {
                 prevVal_Base += val_Base;
             }
 
-            if (['RECOVERY_OPENED', 'RECOVERY_RESOLVED'].includes(inv.lifecycleState || '')) {
+            if (inv.lifecycleState === 'RECOVERY_OPENED') {
                 leakCount++;
                 leakVal_Base += val_Base;
             }
@@ -81,8 +94,29 @@ export async function GET(request: NextRequest) {
             }
         });
 
-        // 4. Trend Data Generation (Cleared for empty application state)
-        const trend: any[] = [];
+        // 4. Trend Data Generation (Aggregated by Month)
+        const trendMap = new Map<string, { month: string; prevented: number; leakage: number }>();
+        invoicesData.forEach(inv => {
+            const date = inv.createdAt ? new Date(inv.createdAt) : new Date();
+            const monthKey = format(date, 'MMM yyyy');
+            const val_Base = convertCurrency(Number(inv.grossAmount), inv.currency || 'USD', reportingCurrency);
+
+            const existing = trendMap.get(monthKey) || { month: monthKey, prevented: 0, leakage: 0 };
+
+            if (inv.lifecycleState === 'CONFIRMED_DUPLICATE') {
+                existing.prevented += val_Base;
+            }
+            if (['RECOVERY_OPENED', 'RECOVERY_RESOLVED'].includes(inv.lifecycleState || '')) {
+                existing.leakage += val_Base;
+            }
+
+            trendMap.set(monthKey, existing);
+        });
+
+        const trend = Array.from(trendMap.values()).sort((a, b) => {
+            const da = new Date(a.month), db = new Date(b.month);
+            return da.getTime() - db.getTime();
+        });
 
         // 5. Workflow State Funnel (Reconciled with Currency)
         const workflowRaw = await db.select({
@@ -175,7 +209,11 @@ export async function GET(request: NextRequest) {
         });
 
     } catch (error: any) {
-        console.error("Dashboard Summary Reboot Failure:", error);
+        logger.error({
+            message: "Dashboard Summary Reboot Failure",
+            action: "DASHBOARD_SUMMARY",
+            error
+        });
         return NextResponse.json({ error: "Aggregator failure", details: error.message }, { status: 500 });
     }
 }
